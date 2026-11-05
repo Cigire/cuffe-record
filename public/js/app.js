@@ -4,7 +4,7 @@
   var S = {
     viewer: { user: null, approved: false, admin: false },
     doc: null, arch: { locked: true, counts: {}, items: [] },
-    expanded: new Set(), hit: null, treeQ: '',
+    pq: '',
     sort: { key: 'name', dir: 1 }, q: '', filter: 'all',
     by: new Map(), kids: new Map(), gen: new Map(), dc: new Map(),
     admin: { users: [], suggestions: [], msg: '', err: false }
@@ -79,7 +79,7 @@
     var m = /^(\d{4})-(\d\d)-(\d\d)/.exec(iso || ''); if (!m) return '';
     return (+m[3]) + ' ' + ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][+m[2] - 1] + ' ' + m[1];
   }
-  function parentCell(id) { var q = id ? S.by.get(id) : null; return q ? '<a href="/person/' + q.id + '">' + esc(dn(q)) + '</a>' : '<span class="vt-empty">unknown</span>'; }
+  function parentCell(id) { var q = id ? S.by.get(id) : null; return q ? '<a href="/person/' + q.id + '">' + esc(dn(q)) + '</a>' : 'unknown'; }
   /* maps: the place name is looked up in the visitor's browser on OpenStreetMap and remembered there */
   function mapBox(place) {
     if (!place || /[;\d]/.test(place) && /born|died/i.test(place)) return '';
@@ -110,7 +110,7 @@
   }
   function drawMap(el, g) {
     var d = 0.04, b = [g.lon - d * 1.6, g.lat - d, g.lon + d * 1.6, g.lat + d].map(function (x) { return x.toFixed(5); }).join(',');
-    el.innerHTML = '<iframe title="Map of ' + esc(el.dataset.place) + '" loading="lazy" referrerpolicy="no-referrer" src="https://www.openstreetmap.org/export/embed.html?bbox=' + b + '&layer=mapnik&marker=' + g.lat.toFixed(5) + ',' + g.lon.toFixed(5) + '"></iframe>' +
+    el.innerHTML = '<iframe class="event-map" title="Map of ' + esc(el.dataset.place) + '" loading="lazy" referrerpolicy="no-referrer" src="https://www.openstreetmap.org/export/embed.html?bbox=' + b + '&layer=mapnik&marker=' + g.lat.toFixed(5) + ',' + g.lon.toFixed(5) + '"></iframe>' +
       '<a class="map-link" target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=' + g.lat.toFixed(5) + '&mlon=' + g.lon.toFixed(5) + '#map=13/' + g.lat.toFixed(5) + '/' + g.lon.toFixed(5) + '">View larger map \u2192</a>';
   }
   function afterMaps() {
@@ -131,39 +131,46 @@
   function lineParent(p) { var id = p.par.find(function (i) { return S.gen.has(i); }); return id == null ? null : S.by.get(id); }
 
   /* ---------- shell ---------- */
-  var KIND_LABEL = { photo: 'Photos', newspaper: 'Newspaper Articles', research: 'Research Notes', other: 'Other Records' };
+  var KIND_LABEL = { newspaper: 'Newspaper Articles', photo: 'Photos', research: 'Research Notes', other: 'Other Records' };
   function path() { var p = location.pathname.replace(/\/+$/, ''); return p || '/'; }
 
   function shell(active) {
-    var v = S.viewer, tabs = [['/', 'Overview'], ['/tree', 'Family Tree'], ['/archive', 'Archive'], ['/photos', 'Photos'],
-      [v.user ? '/membership' : '/membership', v.user ? 'My Account' : 'Login / Register'], ['/help', 'Help']];
+    var v = S.viewer, tabs = [['/', 'Overview'], ['/tree', 'Family Tree'], ['/archive', 'Archive']];
+    if (v.approved || v.admin) tabs.push(['/photos', 'Photos']);
+    tabs.push(['/membership', v.user ? 'My Account' : 'Login / Register'], ['/help', 'Help']);
     if (v.admin) tabs.push(['/admin', 'Admin']);
     $('#tabs').innerHTML = tabs.map(function (t) { return '<a href="' + t[0] + '"' + (t[0] === active ? ' class="active"' : '') + '>' + t[1] + '</a>'; }).join('');
     var label = 'Guest', dot = 'guest';
     if (v.user) {
       if (v.admin) { label = 'Admin'; dot = 'approved'; }
       else if (v.approved) { label = 'Approved member'; dot = 'approved'; }
-      else if (v.user.status === 'denied') { label = 'Access declined'; dot = 'denied'; }
+      else if (v.user.status === 'denied') { label = 'Access denied'; dot = 'denied'; }
       else { label = 'Pending approval'; dot = 'pending'; }
     }
     $('#pill').innerHTML = '<span class="dot ' + dot + '"></span> ' + esc(label);
-    $('#foot-count').textContent = S.doc ? S.doc.people.length + ' people recorded' : '';
+    $('#foot-email').textContent = v.user ? v.user.email : 'not signed in';
   }
 
   function activeTab(p) {
     if (p === '/' || p === '') return '/';
     if (p.indexOf('/person/') === 0) return '/archive';
+    if (p.indexOf('/tree/') === 0) return '/tree';
+    if (p.indexOf('/membership/') === 0) return '/membership';
     return p;
   }
 
   function render() {
     var p = path(), v = $('#view');
     if (!S.doc) { v.innerHTML = '<p class="empty-note">Loading the archive…</p>'; return; }
+    if (p === '/tree') { history.replaceState(null, '', '/tree/' + S.doc.root); p = path(); }
+    if ((p === '/membership/login' || p === '/membership/register') && S.viewer.user) { history.replaceState(null, '', '/membership'); p = '/membership'; }
     shell(activeTab(p));
-    var m = /^\/person\/(\d+)$/.exec(p);
+    var m = /^\/person\/(\d+)$/.exec(p), tm = /^\/tree\/(\d+)$/.exec(p);
     var html;
     if (m) html = pagePerson(+m[1]);
-    else if (p === '/tree') html = pageTree();
+    else if (tm) html = pageTree(+tm[1]);
+    else if (p === '/membership/login') html = pageLogin();
+    else if (p === '/membership/register') html = pageRegister();
     else if (p === '/archive') html = pageArchive();
     else if (p === '/photos') html = pagePhotos();
     else if (p === '/membership') html = pageMembership();
@@ -172,7 +179,6 @@
     else html = pageHome();
     v.innerHTML = html;
     document.title = (m && S.by.get(+m[1]) ? nm(S.by.get(+m[1])) + ' · ' : '') + 'The Cuffe Record';
-    if (p === '/tree') afterTree();
     if (m) afterMaps();
     if (p === '/archive') afterArchive();
     if (p === '/admin') afterAdmin();
@@ -186,122 +192,119 @@
 
   /* ---------- overview ---------- */
   function banner() {
-    var v = S.viewer, hid = S.doc.hidden;
-    var msg, act = '';
+    var v = S.viewer;
     if (v.approved) return '';
-    if (v.user && v.user.status === 'pending') msg = 'Your account is waiting for approval. Document scans and full details open once an admin approves it.';
-    else if (v.user) msg = 'Your access request was declined. Please contact the family administrator.';
-    else { msg = "You're viewing the public preview. Document scans, notes and living relatives are visible to approved members only."; act = '<a href="/membership">Request access →</a>'; }
-    return '<div class="banner"><span>' + msg + (hid ? ' ' + hid + ' living relatives are shown without details.' : '') + '</span>' + act + '</div>';
+    var msg = "You're viewing the public preview. Document scans are visible to approved members only.", act = '<a class="linklike" href="/membership">Request access →</a>';
+    if (v.user && v.user.status === 'pending') { msg = 'Your access request is awaiting admin review.'; act = ''; }
+    else if (v.user) { msg = 'Your access request was not approved.'; act = '<a class="linklike" href="/membership">See details</a>'; }
+    return '<div class="banner"><span>' + msg + '</span>' + act + '</div>';
+  }
+
+  function yearsLabel(p) { return p.private ? 'Living' : 'b. ' + (p.born ? p.born : '—'); }
+  function lifeFlag(p) {
+    var y = year(p);
+    if (p.died || p.dplace || p.burial || (y != null && y < 1920)) return ' · deceased';
+    return y != null ? ' · living' : '';
   }
 
   function personCard(p) {
-    var kids = kidsOf(p.id).length, d = details(p), n = docs(p.id), tags = [];
+    var kids = kidsOf(p.id).length, v = vcount(p), n = docs(p.id), tags = [];
     if (kids) tags.push(kids + (kids === 1 ? ' child' : ' children'));
-    tags.push(d + '/4 details');
-    if (p.dna) tags.push('DNA matched');
-    if (p.usa) tags.push('Lived in USA');
+    if (v) tags.push(v + '/4 vital events');
     var c = S.arch.counts[p.id] || {};
     Object.keys(KIND_LABEL).forEach(function (k) { if (c[k]) tags.push(KIND_LABEL[k] + ' (' + c[k] + ')'); });
-    var sub = yrs(p) + (p.id === S.doc.root ? ' · the root of the tree' : '');
+    var sub = yearsLabel(p) + (p.id === S.doc.root ? ' · the root of the tree' : '');
     return '<a class="person-card-link" href="/person/' + p.id + '"><div class="person-card"><span class="stamp">' + n + ' docs</span><h3>' + esc(dn(p)) + '</h3><div class="years">' + esc(sub) + '</div><div class="tagrow">' +
-      tags.map(function (t) { return '<span class="tag">' + esc(t) + '</span>'; }).join('') + '</div><span class="open">View record →</span></div></a>';
+      (tags.length ? tags.map(function (t) { return '<span class="tag">' + esc(t) + '</span>'; }).join('') : '<span class="tag" style="opacity:.5">No records yet</span>') + '</div><span class="open">View record →</span></div></a>';
   }
 
   function pageHome() {
-    var d = S.doc, line = S.gen.size, items = S.arch.items.length;
+    var d = S.doc;
     var total = Object.keys(S.arch.counts).reduce(function (a, k) { return a + S.arch.counts[k].total; }, 0);
-    var first = d.people.filter(function (p) { return S.gen.has(p.id) && S.gen.get(p.id) <= 3 && !(S.gen.get(p.id) === 3 && p.sp.length === 0 && false); })
-      .sort(function (a, b) { return (S.gen.get(a.id) - S.gen.get(b.id)) || byBirth(a.id, b.id); });
+    var cards = [S.by.get(d.root)].concat(kidsOf(d.root).map(function (i) { return S.by.get(i); }));
     return '<div class="home-hero"><div class="eyebrow">Welcome</div><h1>The story of the Cuffe family, kept for those who come next</h1>' +
       '<p class="welcome-copy">This is a family archive for the descendants of the Cuffes of Clonruff, the earliest of whom was born in 1790. Whether you’re tracing a great-grandparent’s townland, looking for a relative’s marriage date, or just curious how you connect to everyone else here, this site is built for you to browse, explore and add to over time.</p>' +
       '<div class="aims-grid">' +
-      '<div class="aim"><h4>Record</h4><p>Capture each person’s dates, place and notes, including who witnessed the marriages that can still be traced.</p></div>' +
-      '<div class="aim"><h4>Preserve</h4><p>Keep newspaper clippings, photographs and research notes in one place, linked to the person they belong to.</p></div>' +
+      '<div class="aim"><h4>Record</h4><p>Capture each person’s birth, marriage, death and burial — with place, date and a map wherever it can be traced.</p></div>' +
+      '<div class="aim"><h4>Preserve</h4><p>Keep newspaper clippings, photographs and research notes safe in one place, linked to the person they belong to.</p></div>' +
       '<div class="aim"><h4>Connect</h4><p>Show real father, mother and spouse relationships, so it’s clear exactly how every name fits into the wider family.</p></div>' +
-      '<div class="aim"><h4>Share</h4><p>Keep the family tree open for anyone to browse, while document scans and living relatives stay visible to approved family members only.</p></div></div></div>' +
-      '<div class="page-title"><h2>The archive so far</h2><span class="meta">' + total + ' records catalogued · ' + d.people.length + ' people · ' + line + ' in the Cuffe line</span></div>' +
+      '<div class="aim"><h4>Share</h4><p>Keep the family tree open for anyone to browse, while document scans stay visible to approved family members only.</p></div></div></div>' +
+      '<div class="page-title"><h2>The archive so far</h2><span class="meta">' + total + ' records catalogued · ' + d.people.length + ' people</span></div>' +
       banner() +
-      '<div class="card-grid">' + first.map(personCard).join('') + '</div>' +
-      '<p style="margin-top:26px"><a class="btn small ghost" href="/archive">See all ' + d.people.length + ' people</a></p>';
+      '<div class="card-grid">' + cards.map(personCard).join('') + '</div>';
   }
 
-  /* ---------- family tree ---------- */
-  var NW = 158, NH = 80, GX = 14, GY = 54;
-  function layout() {
-    function build(id) {
-      var ch = S.expanded.has(id) ? kidsOf(id).map(build) : [];
-      var w = ch.length ? Math.max(NW, ch.reduce(function (a, c) { return a + c.w; }, 0) + GX * (ch.length - 1)) : NW;
-      return { id: id, ch: ch, w: w };
-    }
-    var root = build(S.doc.root), nodes = [], links = [], maxD = 0;
-    (function place(n, left, d) {
-      n.x = left + n.w / 2; n.y = 10 + d * (NH + GY); maxD = Math.max(maxD, d); nodes.push(n);
-      var used = n.ch.reduce(function (a, c) { return a + c.w; }, 0) + GX * Math.max(0, n.ch.length - 1);
-      var cx = left + (n.w - used) / 2;
-      n.ch.forEach(function (c) { links.push([n, c]); place(c, cx, d + 1); cx += c.w + GX; });
-    })(root, 10, 0);
-    return { nodes: nodes, links: links, w: root.w + 20, h: 20 + (maxD + 1) * (NH + GY) };
+  /* ---------- family tree: one person at a time, laid out as in the Finlay Record ---------- */
+  var TW = 180, TH = 96, FW = 212, FH = 100, TIER = 150, SGAP = 26, CGAP = 18;
+  function tbox(q, label, x, y, focal) {
+    var w = focal ? FW : TW, h = focal ? FH : TH;
+    return '<g class="tnode' + (focal ? ' root' : '') + '" transform="translate(' + (x - w / 2) + ',' + (y - h / 2) + ')"' + (q ? ' data-go="' + (focal ? '/person/' : '/tree/') + q.id + '"' : '') + '>' +
+      '<rect width="' + w + '" height="' + h + '" rx="2"/><foreignObject x="0" y="0" width="' + w + '" height="' + h + '"><div class="tnode-body"><div class="name">' + esc(q ? dn(q) : (label || 'unknown')) + '</div>' +
+      (q ? '<div class="years">' + esc(yearsLabel(q)) + '</div>' : '') + (q && !focal && !q.private && kidsOf(q.id).length ? '<div class="gcount">' + kidsOf(q.id).length + ' child' + (kidsOf(q.id).length > 1 ? 'ren' : '') + ' on file</div>' : '') + '</div></foreignObject></g>';
   }
-
-  function pageTree() {
-    return '<div class="page-title"><h2>Family tree</h2><span class="meta">' + S.gen.size + ' people descend from the first Cuffe</span></div>' +
-      '<p class="lede">Select a person to open their record. Use the small + beneath a card to show or hide their children.</p>' + banner() +
-      '<div class="toolbar"><input type="search" id="tq" placeholder="Find a name or place" aria-label="Find a name or place" value="' + esc(S.treeQ) + '">' +
-      '<button class="btn small ghost" data-act="tree-open" type="button">Show everyone</button>' +
-      '<button class="btn small ghost" data-act="tree-reset" type="button">Reset view</button><span class="count" id="tcount"></span></div>' +
-      '<div id="tmatches" class="kinds"></div><div class="tree-wrap" id="twrap"></div>';
-  }
-
-  function drawTree() {
-    var L = layout(), out = [];
-    L.links.forEach(function (l) {
-      var a = l[0], b = l[1], mid = a.y + NH + GY / 2;
-      out.push('<path class="tlink" d="M' + a.x + ' ' + (a.y + NH) + 'V' + mid + 'H' + b.x + 'V' + b.y + '"/>');
+  function tcurve(x1, y1, x2, y2) { return '<path class="tlink" d="M' + x1 + ',' + y1 + ' C ' + x1 + ',' + (y1 + y2) / 2 + ' ' + x2 + ',' + (y1 + y2) / 2 + ' ' + x2 + ',' + y2 + '"/>'; }
+  function pageTree(id) {
+    var p = S.by.get(id);
+    if (!p) return '<a class="back-link" href="/tree">← Whole tree</a><p class="empty-note">That person is not in the record.</p>';
+    var unlocked = !p.private;
+    var father = p.fa ? S.by.get(p.fa) : null, mother = p.mo ? S.by.get(p.mo) : null;
+    var all = unlocked ? kidsOf(id).map(function (i) { return S.by.get(i); }) : [];
+    var sids = [];
+    if (unlocked) p.sp.concat((p.marr || []).map(function (m) { return m.sp; })).forEach(function (s) { if (s && S.by.get(s) && sids.indexOf(s) < 0) sids.push(s); });
+    var used = {};
+    var groups = sids.map(function (sid) {
+      var ks = all.filter(function (c) { return (c.fa === id ? c.mo : c.fa) === sid; });
+      ks.forEach(function (c) { used[c.id] = 1; });
+      return { box: true, person: S.by.get(sid), kids: ks };
     });
-    L.nodes.forEach(function (n) {
-      var p = S.by.get(n.id), has = kidsOf(n.id).length, open = S.expanded.has(n.id), c = dcount(n.id);
-      out.push('<g class="tnode' + (n.id === S.doc.root ? ' root' : '') + (S.hit === n.id ? ' hit' : '') + '" data-go="/person/' + n.id + '" data-node="' + n.id + '"><rect x="' + (n.x - NW / 2) + '" y="' + n.y + '" width="' + NW + '" height="' + NH + '" rx="2"/>' +
-        '<foreignObject x="' + (n.x - NW / 2) + '" y="' + n.y + '" width="' + NW + '" height="' + NH + '"><div class="tnode-body"><div class="name">' + esc(p.private || p.first ? nm(p) : (p.sur || 'Unnamed')) + '</div><div class="years">' + esc(p.private ? 'Living' : (p.born ? 'b. ' + p.born : (p.died ? 'd. ' + p.died : ''))) + '</div>' +
-        (has ? '<div class="gcount">' + c + (c === 1 ? ' descendant' : ' descendants') + '</div>' : '') + '</div></foreignObject></g>');
-      if (has) out.push('<g class="ttog" data-tog="' + n.id + '"><title>' + (open ? 'Hide' : 'Show') + ' children</title><circle cx="' + n.x + '" cy="' + (n.y + NH + 11) + '" r="9"/><text x="' + n.x + '" y="' + (n.y + NH + 11) + '">' + (open ? '−' : '+') + '</text></g>');
+    var rest = all.filter(function (c) { return !used[c.id]; });
+    if (rest.length) groups.unshift({ box: false, person: null, kids: rest });
+    var hasF = !!father, hasM = !!mother, hasP = hasF || hasM;
+    var nSp = groups.filter(function (g) { return g.box; }).length;
+    var flat = [];
+    groups.forEach(function (g) { g.kids.forEach(function (c) { flat.push({ c: c, g: g }); }); });
+    var n = flat.length;
+    var spouseRowW = FW + nSp * (SGAP + TW);
+    var childrenRowW = n ? n * TW + (n - 1) * CGAP + 120 : 0;
+    var width = Math.max(640, childrenRowW, spouseRowW), cx = width / 2;
+    var y = 40, parentsY = null, childrenY = null;
+    if (hasP) { parentsY = y + TH / 2; y += TIER; }
+    var focalY = y + FH / 2; y += TIER;
+    if (n) { childrenY = y + TH / 2; y += TIER - 40; }
+    var height = y + 30;
+    var pairLeft = cx - spouseRowW / 2, focalX = pairLeft + FW / 2, cursor = pairLeft + FW;
+    groups.forEach(function (g) {
+      if (!g.box) { g.ax = focalX; return; }
+      cursor += SGAP; g.bx = cursor + TW / 2; g.ax = g.bx; cursor += TW;
     });
-    var wrap0 = $('#twrap'), keep = wrap0.scrollLeft;
-    wrap0.innerHTML = '<svg width="' + L.w + '" height="' + (L.h + 14) + '" viewBox="0 0 ' + L.w + ' ' + (L.h + 14) + '" role="img" aria-label="Family tree of the Cuffe line">' + out.join('') + '</svg>';
-    var wrap = $('#twrap');
-    if (S.center) { var rn = L.nodes[0]; wrap.scrollLeft = Math.max(0, rn.x - wrap.clientWidth / 2); S.center = false; } else wrap.scrollLeft = keep;
-    var shown = L.nodes.length;
-    $('#tcount').textContent = shown + ' of ' + S.gen.size + ' shown';
-    if (S.hit != null) { var h = $('.tnode.hit'); if (h && h.scrollIntoView) h.scrollIntoView({ block: 'nearest', inline: 'center' }); }
-  }
-
-  function afterTree() {
-    if (!S.expanded.size) resetTree();
-    S.center = true;
-    drawTree();
-    if (S.treeQ) runTreeSearch(false);
-  }
-  function resetTree() { S.expanded = new Set([S.doc.root].concat(S.doc.people.filter(function (p) { return S.gen.get(p.id) === 1 || S.gen.get(p.id) === 2; }).map(function (p) { return p.id; }))); S.hit = null; }
-  function runTreeSearch(scroll) {
-    var q = S.treeQ.trim().toLowerCase(), box = $('#tmatches');
-    if (!q) { S.hit = null; box.innerHTML = ''; drawTree(); return; }
-    var ms = S.doc.people.filter(function (p) { return !p.private && (nm(p) + ' ' + (p.place || '')).toLowerCase().indexOf(q) >= 0; });
-    var first = ms.find(function (p) { return S.gen.has(p.id); });
-    S.hit = first ? first.id : null;
-    if (first) { var c = lineParent(first); while (c) { S.expanded.add(c.id); c = lineParent(c); } }
-    drawTree();
-    box.innerHTML = ms.slice(0, 10).map(function (p) { return '<a class="tag" href="/person/' + p.id + '">' + esc(nm(p)) + (S.gen.has(p.id) ? '' : ' (married in)') + '</a>'; }).join('') + (ms.length > 10 ? '<span class="tag">+' + (ms.length - 10) + ' more</span>' : '') + (!ms.length ? '<span class="empty-note">No one matches that.</span>' : '');
+    var pairW = TW + (hasF && hasM ? 20 + TW : 0), pairL = cx - pairW / 2;
+    var fx = hasM ? pairL + TW / 2 : cx, mx = hasF ? pairL + TW + 20 + TW / 2 : cx;
+    var spacing = TW + CGAP, left = cx - (n * TW + (n - 1) * CGAP) / 2;
+    var out = [];
+    if (hasF) out.push(tcurve(fx, parentsY + TH / 2, focalX, focalY - FH / 2));
+    if (hasM) out.push(tcurve(mx, parentsY + TH / 2, focalX, focalY - FH / 2));
+    flat.forEach(function (k, i) { out.push(tcurve(k.g.ax, focalY + FH / 2, left + spacing * i + TW / 2, childrenY - TH / 2)); });
+    if (hasF) out.push(tbox(father, '', fx, parentsY, false));
+    if (hasM) out.push(tbox(mother, '', mx, parentsY, false));
+    out.push(tbox(p, '', focalX, focalY, true));
+    groups.forEach(function (g) { if (g.box) out.push(tbox(g.person, '', g.bx, focalY, false)); });
+    flat.forEach(function (k, i) { out.push(tbox(k.c, '', left + spacing * i + TW / 2, childrenY, false)); });
+    return '<a class="back-link" href="/tree">← Whole tree</a>' +
+      '<div class="page-title"><h2>Family tree</h2><span class="meta">' + esc(dn(p)) + ' (' + esc(yearsLabel(p)) + ')' + (unlocked ? ' &amp; ' + n + ' children' : '') + '</span></div>' +
+      '<p class="lede">Click the highlighted box to open ' + esc(dn(p)) + '’s full record — click any other name to re-centre the tree there.</p>' +
+      (!unlocked ? '<p class="lede">' + esc(dn(p)) + ' is a living family member, so their marriages and children are visible to approved members only.</p>' : '') +
+      '<div class="tree-wrap"><svg class="tree-svg" viewBox="0 0 ' + width + ' ' + height + '" width="100%" style="display:block" role="img" aria-label="Family tree">' + out.join('') + '</svg></div>';
   }
 
   /* ---------- archive (people table) ---------- */
   function pageArchive() {
-    return '<div class="page-title"><h2>Browse the archive</h2><span class="meta" id="acount"></span></div>' + banner() +
+    return '<div class="page-title"><h2>Browse the archive</h2><span class="meta" id="acount"></span></div>' +
       '<div class="archive-search field"><label for="aq">Search by name</label><input type="search" id="aq" placeholder="e.g. Bridget, Thomas\u2026" autocomplete="off" value="' + esc(S.q) + '"></div>' +
       '<div class="table-scroll"><table class="archive-table"><thead><tr>' + th('name', 'Name') + th('born', 'Birth') + th('father', 'Father') + th('mother', 'Mother') + th('vital', 'Vital events') + th('docs', 'Documents') + '<th></th></tr></thead><tbody id="abody"></tbody></table></div>';
   }
   function th(k, label) {
     var on = S.sort.key === k;
-    return '<th aria-sort="' + (on ? (S.sort.dir > 0 ? 'ascending' : 'descending') : 'none') + '"><button type="button" class="sort-link' + (on ? ' active' : '') + '" data-sort="' + k + '">' + label + ' <span class="sort-arrow">' + (on && S.sort.dir < 0 ? '\u25bc' : '\u25b2') + '</span></button></th>';
+    return '<th aria-sort="' + (on ? (S.sort.dir > 0 ? 'ascending' : 'descending') : 'none') + '"><button type="button" class="sort-link' + (on ? ' active' : '') + '" data-sort="' + k + '">' + label + ' <span class="sort-arrow">' + (on ? (S.sort.dir < 0 ? '\u25bc' : '\u25b2') : '\u2195') + '</span></button></th>';
   }
   function afterArchive() { fillArchive(); }
   function parentName(id) { var q = id ? S.by.get(id) : null; return q ? dn(q).toLowerCase() : '\uffff'; }
@@ -325,7 +328,7 @@
     });
     $('#acount').textContent = (rows.length === S.doc.people.length ? rows.length : rows.length + ' of ' + S.doc.people.length) + ' people documented';
     $('#abody').innerHTML = rows.map(function (p) {
-      return '<tr><td><a class="name" href="/person/' + p.id + '">' + esc(dn(p)) + '</a></td><td class="muted-cell">' + (p.private ? '<em>Living</em>' : esc(p.born) || '\u2014') + '</td><td class="kin">' + parentCell(p.fa) + '</td><td class="kin">' + parentCell(p.mo) + '</td><td class="muted-cell">' + vcount(p) + '/4</td><td class="muted-cell">' + docs(p.id) + '</td><td><a class="view-link" href="/person/' + p.id + '">View record \u2192</a></td></tr>';
+      return '<tr><td><a class="name" href="/person/' + p.id + '">' + esc(dn(p)) + '</a></td><td>' + (p.private ? '<span class="vt-empty">Living</span>' : (p.born ? esc(p.born) : '<span class="vt-empty">\u2014</span>')) + '</td><td class="parents">' + parentCell(p.fa) + '</td><td class="parents">' + parentCell(p.mo) + '</td><td class="muted-cell">' + vcount(p) + '/4</td><td class="muted-cell">' + docs(p.id) + '</td><td><a class="view-link" href="/person/' + p.id + '">View record \u2192</a></td></tr>';
     }).join('') || '<tr><td colspan="7" class="empty-note">Nobody matches. Clear the search to see everyone.</td></tr>';
   }
 
@@ -334,124 +337,240 @@
     return '<div class="locked-block"><span class="lock-icon" aria-hidden="true">\u{1F512}</span><p>' + text + '</p>' +
       (S.viewer.user ? '' : '<a class="btn small" href="/membership">Login / Register</a>') + '</div>';
   }
-  function pagePhotos() {
-    var items = S.arch.items.filter(function (i) { return i.kind === 'photo'; });
-    var body;
-    if (S.arch.locked) body = locked(S.viewer.user ? 'Photographs open once an admin approves your account.' : 'Photographs are visible to approved family members only.');
-    else if (!items.length) body = '<p class="empty-note">No photographs have been added yet.' + (S.viewer.admin ? ' Add them from the <a href="/admin">Admin</a> tab.' : '') + '</p>';
-    else body = '<ul class="photo-grid">' + items.map(function (i) {
-      var who = i.personId != null && S.by.get(i.personId) ? nm(S.by.get(i.personId)) : '';
-      return '<li><a class="photo-thumb" href="/api/file/' + i.id + '" target="_blank" rel="noopener"><img src="/api/file/' + i.id + '" alt="' + esc(i.title) + '" loading="lazy"><span class="cap">' + esc(i.title) + '</span><span class="kind">' + esc(who) + '</span></a></li>';
+  function photoParams() { var sp = new URLSearchParams(location.search); return { q: sp.get('q') || '', photo: sp.get('photo') || '' }; }
+  function photoHref(id, q) { var ps = []; if (q) ps.push('q=' + encodeURIComponent(q)); if (id) ps.push('photo=' + encodeURIComponent(id)); return '/photos' + (ps.length ? '?' + ps.join('&') : ''); }
+  function photoOwner(i) { return i.personId != null && S.by.get(i.personId) ? dn(S.by.get(i.personId)) : i.title; }
+  function photoList() {
+    var q = (S.pq || '').trim().toLowerCase();
+    return S.arch.items.filter(function (i) { return i.kind === 'photo' && (!q || photoOwner(i).toLowerCase().indexOf(q) >= 0); });
+  }
+  function photoGrid() {
+    var list = photoList();
+    if (!list.length) return '<p class="empty-note">' + (S.pq.trim() ? 'No photos match “' + esc(S.pq.trim()) + '”.' : 'No photos have been added yet.') + '</p>';
+    return '<ul class="photo-grid">' + list.map(function (i) {
+      return '<li><a class="photo-thumb" href="' + photoHref(i.id, S.pq.trim()) + '"><img src="/api/file/' + i.id + '" alt="' + esc(i.title) + '" loading="lazy"><span class="cap">' + esc(photoOwner(i)) + '</span><span class="kind">Photo</span></a></li>';
     }).join('') + '</ul>';
-    return '<div class="page-title"><h2>Photos</h2><span class="meta">' + (S.arch.locked ? '' : items.length + ' photographs') + '</span></div><p class="lede">Family photographs, linked to the person they show or belong to.</p>' + body;
+  }
+  function fillPhotos() { var g = $('#pgrid'); if (g) g.innerHTML = photoGrid(); }
+  function photoViewer(list, idx) {
+    var i = list[idx], q = S.pq.trim(), p = i.personId != null ? S.by.get(i.personId) : null;
+    var close = photoHref(null, q), prev = idx > 0 ? photoHref(list[idx - 1].id, q) : '', next = idx < list.length - 1 ? photoHref(list[idx + 1].id, q) : '';
+    var nav = (prev ? '<a class="btn ghost small" href="' + prev + '">‹ Previous</a>' : '<span class="btn ghost small" aria-disabled="true">‹ Previous</span>') +
+      (next ? '<a class="btn ghost small" href="' + next + '">Next ›</a>' : '<span class="btn ghost small" aria-disabled="true">Next ›</span>');
+    var added = longDate(i.createdAt);
+    var info = '<div class="doc-section"><h4>Photo details</h4><table class="vitals-table"><tbody><tr><th>Title</th><td>' + esc(i.title) + '</td></tr><tr><th>Type</th><td>Photo</td></tr>' +
+      '<tr><th>Added</th><td>' + (added ? esc(added) : '<span class="vt-empty">Original archive</span>') + '</td></tr><tr><th>File</th><td><a href="/api/file/' + i.id + '" target="_blank" rel="noopener">Open full size →</a></td></tr></tbody></table></div>';
+    if (p) {
+      var row = function (k, v) { return '<tr><th>' + k + '</th><td>' + v + '</td></tr>'; };
+      var fa = p.fa ? S.by.get(p.fa) : null, mo = p.mo ? S.by.get(p.mo) : null;
+      var ev = function (pl, d) { return (pl ? esc(pl) : '<span class="vt-empty">Location unknown</span>') + ' · ' + (d ? esc(d) : '<span class="vt-empty">date unknown</span>'); };
+      info += '<div class="doc-section"><h4>Person</h4><table class="vitals-table"><tbody>' + row('Name', '<a href="/person/' + p.id + '">' + esc(dn(p)) + '</a>') +
+        row('Born', (p.born ? esc(p.born) : '<span class="vt-empty">—</span>') + lifeFlag(p)) + row('Father', parentCell(p.fa)) + row('Mother', parentCell(p.mo)) +
+        ((p.born || p.bplace) ? row('Birth', ev(p.bplace, p.born)) : '') + ((p.died || p.dplace) ? row('Death', ev(p.dplace, p.died)) : '') + (p.burial ? row('Burial', ev(p.burial, '')) : '') +
+        '</tbody></table><a href="/person/' + p.id + '" class="view-link" style="display:inline-block;margin-top:10px">View full record →</a></div>';
+    }
+    return '<div class="photo-viewer" role="dialog" aria-modal="true" aria-label="' + esc(i.title) + '" data-close="' + close + '" data-prev="' + prev + '" data-next="' + next + '">' +
+      '<div class="viewer-bar"><a class="btn ghost small" href="' + close + '">← Back to photos</a><span class="viewer-pos">' + (idx + 1) + ' of ' + list.length + '</span><span class="viewer-nav">' + nav + '</span></div>' +
+      '<div class="viewer-row"><a href="/api/file/' + i.id + '" target="_blank" rel="noopener" title="Open full size" class="viewer-photo"><img src="/api/file/' + i.id + '" alt="' + esc(i.title) + '"></a>' +
+      '<div class="viewer-info"><div class="viewer-info-inner">' + info + '</div></div></div></div>';
+  }
+  function pagePhotos() {
+    if (S.arch.locked) return '<div class="page-title"><h2>Photos</h2></div><div class="locked-block"><span class="lock-icon" aria-hidden="true">\u{1F512}</span><div style="font-family:var(--display);font-size:19px">The photo collection is for approved members</div><p>Family photographs and portraits are visible to approved members only.</p><a href="/membership" class="btn">' + (S.viewer.user ? 'Membership status' : 'Request access') + '</a></div>';
+    var pp = photoParams(); S.pq = pp.q;
+    var all = S.arch.items.filter(function (i) { return i.kind === 'photo'; });
+    var list = photoList(), idx = -1;
+    list.forEach(function (i, k) { if (i.id === pp.photo) idx = k; });
+    return '<div class="page-title"><h2>Photos</h2><span class="meta">' + all.length + ' photo' + (all.length === 1 ? '' : 's') + ' in the archive</span></div>' +
+      '<div class="field" style="max-width:340px;margin-bottom:6px"><label for="pq">Filter by person</label><input type="search" id="pq" placeholder="e.g. Bridget, Thomas…" autocomplete="off" value="' + esc(pp.q) + '"></div>' +
+      '<div id="pgrid">' + photoGrid() + '</div>' + (idx >= 0 ? photoViewer(list, idx) : '');
   }
 
   /* ---------- person ---------- */
   function table(list) {
     if (!list.length) return '';
     return '<table class="children-table"><thead><tr><th></th><th>Name</th><th>Birth</th><th>Vital events</th><th>Documents</th><th></th></tr></thead><tbody>' + list.map(function (p, i) {
-      return '<tr><td class="idx">' + (i + 1) + '.</td><td><a class="name" href="/person/' + p.id + '">' + esc(dn(p)) + '</a></td><td class="muted-cell">' + (p.private ? '<em>Living</em>' : esc(p.born) || '\u2014') + '</td><td class="muted-cell">' + vcount(p) + '/4</td><td class="muted-cell">' + docs(p.id) + '</td><td><a class="view-link" href="/person/' + p.id + '">View record \u2192</a></td></tr>';
+      return '<tr><td class="idx">' + (i + 1) + '.</td><td><a class="name" href="/person/' + p.id + '">' + esc(dn(p)) + '</a></td><td>' + (p.private ? '<span class="vt-empty">Living</span>' : (p.born ? esc(p.born) : '<span class="vt-empty">—</span>')) + '</td><td class="muted-cell">' + vcount(p) + '/4</td><td class="muted-cell">' + docs(p.id) + '</td><td><a class="view-link" href="/person/' + p.id + '">View record →</a></td></tr>';
     }).join('') + '</tbody></table>';
   }
+  var ORD = ['1st', '2nd', '3rd', '4th', '5th', '6th'];
+  var BUCKETS = [['newspaper', 'Newspaper Articles (Scanned)'], ['photo', 'Photos'], ['research', 'Research Notes'], ['other', 'Other Records']];
   function pagePerson(id) {
     var p = S.by.get(id);
-    if (!p) return '<a class="back-link" href="/archive">\u2190 Back to archive</a><p class="empty-note">That person is not in the record.</p>';
-    var spouses = p.sp.map(function (i) { return S.by.get(i); }).filter(Boolean);
+    if (!p) return '<a class="back-link" href="/archive">← Back to archive</a><p class="empty-note">That person is not in the record.</p>';
+    var head = 'font-family:var(--display);font-size:34px;margin:0';
+    if (p.private) {
+      return '<a class="back-link" href="/archive">← Back to archive</a><div class="profile-head"><div class="profile-photo placeholder" aria-hidden="true">?</div><div><div class="breadcrumb">Family archive</div>' +
+        '<h2 style="' + head + '">Living relative</h2><div class="years" style="font-family:var(--mono);font-size:12px;color:var(--ink-soft)">Living</div></div></div>' +
+        '<div class="locked-block"><span class="lock-icon" aria-hidden="true">\u{1F512}</span><div style="font-family:var(--display);font-size:19px">This record is for a living person</div><p>To protect their privacy, details of living family members are visible to approved members only.</p><a href="/membership" class="btn">' + (S.viewer.user ? 'Membership status' : 'Request access') + '</a></div>';
+    }
     var kids = kidsOf(id).map(function (i) { return S.by.get(i); });
     var sibIds = Array.from(new Set([].concat.apply([], p.par.map(kidsOf)))).filter(function (i) { return i !== id; }).sort(byBirth);
     var sibs = sibIds.map(function (i) { return S.by.get(i); });
-    var path = [], c = p, g = 0;
-    while (c && g++ < 40) { path.unshift(c); c = lineParent(c); }
-    var crumb = S.gen.has(id) && path.length > 1 ? path.slice(0, -1).map(plink).join(' \u2192 ') : (S.gen.has(id) ? 'Root of the tree' : 'Married into the family');
-    var initial = p.private ? '?' : ((p.first || '').charAt(0) + (p.sur || '').charAt(0)).toUpperCase() || '?';
+    var initial = ((p.first || '').charAt(0) + (p.sur || '').charAt(0)).toUpperCase() || '?';
     var row = function (k, v) { return '<tr><th>' + k + '</th><td>' + v + '</td></tr>'; };
-    var empty = '<span class="vt-empty">Not recorded yet</span>';
+    var none = '<div class="vt-detail"><span class="vt-empty">Not recorded yet</span></div>';
     var nDocs = docs(id);
-    var ev = function (date, place) { if (!date && !place) return empty; return '<div class="vt-event"><div class="vt-detail"><span>' + [date ? esc(date) : '', place ? esc(place) : ''].filter(Boolean).join(' \u00b7 ') + '</span></div>' + (place ? mapBox(place) : '') + '</div>'; };
-    var marrs = (p.marr || []).filter(function (m) { return m.date || m.place; });
-    var marrHtml = marrs.length ? marrs.map(function (m) {
-      var to = m.sp && S.by.get(m.sp) ? ' <span class="vt-sub">to ' + dlink(S.by.get(m.sp)) + '</span>' : '';
-      return '<div class="vt-event"><div class="vt-detail"><span>' + [m.place ? esc(m.place) : '', m.date ? esc(m.date) : ''].filter(Boolean).join(' \u00b7 ') + to + '</span></div>' +
-        (m.wit && S.viewer.approved ? '<div class="vt-sub">Witnesses: ' + esc(m.wit) + '</div>' : '') + (m.place ? mapBox(m.place) : '') + '</div>';
-    }).join('') : empty;
+    var unk = function (t, w) { return t ? esc(t) : '<span class="vt-empty">' + w + '</span>'; };
+    var ev = function (place, date) {
+      if (!place && !date) return none;
+      return '<div class="vt-event"><div class="vt-detail"><span>' + unk(place, 'Location unknown') + ' · ' + unk(date, 'date unknown') + '</span></div>' + (place ? mapBox(place) : '') + '</div>';
+    };
     var vit = row('Name', esc(dn(p))) + row('Father', parentCell(p.fa)) + row('Mother', parentCell(p.mo)) +
-      row(spouses.length > 1 ? 'Spouses' : 'Spouse', spouses.length ? spouses.map(dlink).join('<br>') : '<span class="vt-empty">unknown</span>') +
-      row('Birth', ev(p.born, p.bplace)) + row('Marriage', marrHtml) +
-      row('Death', (p.died || p.dplace) ? ev(p.died, p.dplace) : (p.private ? '<span class="vt-empty">Living</span>' : empty)) +
-      row('Burial', p.burial ? ev('', p.burial) : empty);
-    if (p.place && !p.private) vit += row('Lived at', '<div class="vt-event"><div class="vt-detail"><span>' + esc(p.place) + '</span></div>' + mapBox(p.place) + '</div>');
-    vit += row('Documents', nDocs + ' on file' + (S.arch.locked ? ' <span class="vt-sub">(' + (S.viewer.user ? 'available once an admin approves your account' : 'sign in as an approved member to view') + ')</span>' : ''));
+      row('Birth', ev(p.bplace, p.born)) + row('Death', ev(p.dplace, p.died)) + row('Burial', p.burial ? ev(p.burial, '') : none);
+    if (p.place) vit += row('Lived at', '<div class="vt-event"><div class="vt-detail"><span>' + esc(p.place) + '</span></div>' + mapBox(p.place) + '</div>');
+    vit += row('Documents', nDocs + ' on file' + (S.arch.locked ? ' (' + (S.viewer.user ? 'available once an admin approves your account' : 'sign in as an approved member to view') + ')' : ''));
     if (S.viewer.approved) {
       if (p.dna) vit += row('DNA', 'Tested and matched');
       if (p.usa) vit += row('USA', 'Lived in the United States');
       if (p.notes) vit += row('Notes', esc(p.notes));
     }
-    vit += row('Last modified', esc(longDate(p.mod || S.doc.updated)) || empty);
-    var cats = S.arch.counts[id] || {};
-    var pills = Object.keys(KIND_LABEL).filter(function (k) { return cats[k]; }).map(function (k) { return '<div class="cat-pill">' + KIND_LABEL[k] + ' <b>' + cats[k] + '</b></div>'; }).join('');
+    vit += row('Last Modified', esc(longDate(p.mod || S.doc.updated)) || '<span class="vt-empty">—</span>');
+    /* marriages: each recorded marriage, plus any spouse with no marriage details yet */
+    var ms = (p.marr || []).filter(function (m) { return m.sp || m.date || m.place; }).map(function (m) { return m; });
+    p.sp.forEach(function (s) { if (S.by.get(s) && !ms.some(function (m) { return m.sp === s; })) ms.push({ sp: s, date: '', place: '', wit: '' }); });
+    var marrHtml;
+    if (ms.length) {
+      marrHtml = '<table class="vitals-table"><tbody>' + ms.map(function (m, i) {
+        var sp = m.sp ? S.by.get(m.sp) : null;
+        var who = sp ? '<a href="/person/' + sp.id + '">' + esc(dn(sp)) + '</a>' : '<span class="vt-empty">Not recorded yet</span>';
+        var ks = sp ? kids.filter(function (c) { return (c.fa === id ? c.mo : c.fa) === sp.id; }) : [];
+        return '<tr><th>' + (ORD[i] || (i + 1) + 'th') + ' marriage</th><td><div class="vt-detail"><span>' + who + ((m.date || m.place) ? ' · ' + unk(m.place, 'location unknown') + ' · ' + unk(m.date, 'date unknown') : '') + '</span></div>' +
+          (m.wit && S.viewer.approved ? '<div class="vt-sub">Witnesses: ' + esc(m.wit) + '</div>' : '') + (m.place ? mapBox(m.place) : '') +
+          (ks.length ? '<ul class="doc-list" style="margin-top:8px">' + ks.map(function (c) { return '<li><a class="name" href="/person/' + c.id + '">' + esc(dn(c)) + '</a> <span class="ftype">' + esc(yearsLabel(c)) + '</span></li>'; }).join('') + '</ul>' : '') + '</td></tr>';
+      }).join('') + '</tbody></table>';
+    } else marrHtml = '<p class="empty-note" style="padding:6px 0">No marriages recorded yet.</p>';
     var docHtml;
-    if (S.arch.locked) docHtml = '<div class="locked-block"><span class="lock-icon" aria-hidden="true">\u{1F512}</span><div class="lock-title">' + nDocs + ' document' + (nDocs === 1 ? '' : 's') + ' on file for ' + esc(dn(p)) + '</div><p>Newspaper clippings, photos and research notes are visible to approved members only.</p>' +
-      (S.viewer.user ? '' : '<a class="btn small" href="/membership">Request access</a>') + '</div>';
+    if (S.arch.locked) docHtml = '<div class="locked-block"><span class="lock-icon" aria-hidden="true">\u{1F512}</span><div style="font-family:var(--display);font-size:19px">' + nDocs + ' document' + (nDocs === 1 ? '' : 's') + ' on file for ' + esc(dn(p)) + '</div><p>Newspaper clippings, photos and research notes are visible to approved members.</p><a href="/membership" class="btn">Request access</a></div>';
     else {
       var mine = S.arch.items.filter(function (i) { return i.personId === id; });
-      docHtml = mine.length ? Object.keys(KIND_LABEL).filter(function (k) { return mine.some(function (i) { return i.kind === k; }); }).map(function (k) {
-        return '<h4>' + KIND_LABEL[k] + '</h4><ul class="doc-list">' + mine.filter(function (i) { return i.kind === k; }).map(function (i) {
-          return '<li><a class="fname" href="/api/file/' + i.id + '" target="_blank" rel="noopener">' + esc(i.title) + '</a><span class="ftype">' + esc(i.contentType.split('/')[1]) + '</span></li>';
-        }).join('') + '</ul>';
-      }).join('') : '<p class="empty-note">Nothing has been filed for this person yet.</p>';
+      docHtml = BUCKETS.map(function (b) {
+        var its = mine.filter(function (i) { return i.kind === b[0]; });
+        return '<div class="doc-section"><h4>' + b[1] + ' <span style="opacity:.55">(' + its.length + ')</span></h4>' + (its.length ? '<ul class="doc-list">' + its.map(function (i) {
+          return '<li><a class="doclink" href="/api/file/' + i.id + '" target="_blank" rel="noopener"><span class="fname">\u{1F4C4} ' + esc(i.title) + '</span></a><span class="ftype">view scan</span></li>';
+        }).join('') + '</ul>' : '<p class="empty-note" style="padding:8px 0">None catalogued yet.</p>') + '</div>';
+      }).join('');
     }
     var actions = '';
-    if (S.viewer.approved) actions += '<button class="btn small ghost" data-act="suggest" data-id="' + id + '" type="button">Suggest a correction</button> ';
-    if (S.viewer.admin) actions += '<a class="btn small ghost" href="/admin?edit=' + id + '">Edit record</a>';
-    return '<a class="back-link" href="/archive">\u2190 Back to archive</a>' +
-      '<div class="profile-head"><div class="profile-photo placeholder" aria-hidden="true">' + esc(initial) + '</div><div><div class="breadcrumb">' + crumb + '</div><div class="page-title"><h2>' + esc(dn(p)) + '</h2></div><div class="parent-line">' +
-      (p.private ? 'Living' : 'b. ' + (p.born ? esc(p.born) : '\u2014') + (p.died ? ' \u00b7 d. ' + esc(p.died) : '')) + '</div>' +
-      (pills ? '<div class="cat-summary">' + pills + '</div>' : '') + (actions ? '<div class="profile-actions">' + actions + '</div>' : '') + '</div></div>' +
+    if (S.viewer.admin) actions = '<a class="btn ghost small" href="/admin?edit=' + id + '">Edit</a>';
+    else if (S.viewer.approved) actions = '<button class="btn ghost small" data-act="suggest" data-id="' + id + '" type="button">Suggest an edit</button>';
+    return '<a class="back-link" href="/archive">← Back to archive</a>' +
+      '<div class="profile-head"><div class="profile-photo placeholder" aria-hidden="true">' + esc(initial) + '</div><div><div class="breadcrumb">' + (id === S.doc.root ? 'Root of the tree' : 'Family archive') + '</div>' +
+      '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h2 style="' + head + '">' + esc(dn(p)) + '</h2>' + actions + '</div>' +
+      '<div class="years" style="font-family:var(--mono);font-size:12px;color:var(--ink-soft)">b. ' + (p.born ? esc(p.born) : '—') + lifeFlag(p) + '</div></div></div>' +
       '<div class="doc-section"><h4>Vital records</h4><table class="vitals-table"><tbody>' + vit + '</tbody></table></div>' +
-      '<div class="doc-section doc-files">' + docHtml + '</div>' +
-      (kids.length ? '<div class="doc-section"><h4>Children (' + kids.length + ')</h4>' + table(kids) + '</div>' : '') +
+      '<div class="doc-section"><h4>Marriages' + (ms.length ? ' <span style="opacity:.55">(' + ms.length + ')</span>' : '') + '</h4>' + marrHtml + '</div>' +
+      docHtml +
+      '<div class="doc-section"><h4>Children' + (kids.length ? ' <span style="opacity:.55">(' + kids.length + ')</span>' : '') + '</h4>' + (kids.length ? table(kids) : '<p class="empty-note" style="padding:6px 0">No children linked yet.</p>') + '</div>' +
       (sibs.length ? '<details class="branch-box"><summary>Brothers and sisters <span class="cnt">' + sibs.length + '</span></summary>' + table(sibs) + '</details>' : '');
   }
 
   function pageMembership() {
     var v = S.viewer;
+    var lede = '<p class="lede">Notes, document scans, photographs and living relatives are restricted to approved family members. Anyone can browse the tree and see who’s documented; an admin approves access to the records themselves.</p>';
     if (v.user) {
-      var u = v.user, dot = u.status === 'approved' ? 'approved' : u.status === 'denied' ? 'denied' : 'pending';
-      var msg = v.admin ? 'You are an administrator. You can approve members, edit records and add documents.' :
-        u.status === 'approved' ? 'Your account is approved. You can see document scans, notes and photographs, and suggest corrections.' :
-        u.status === 'denied' ? 'Your access request was declined. Please contact the family administrator.' :
-        'Your account is waiting for an admin to approve it. You can still browse the tree.';
-      return '<div class="page-title"><h2>My Account</h2></div><p class="lede">Your sign-in and access to the family records.</p><div class="forms-row">' +
-        '<div class="account-card"><h3 style="margin-top:0">' + esc(u.name) + '</h3><p class="sub-copy">' + esc(u.email) + '</p><div class="account-status-row"><span class="dot ' + dot + '"></span><div>' + esc(msg) + '</div></div>' +
-        '<button class="btn small ghost" data-act="logout" type="button">Log out</button></div>' +
-        '<div class="account-card"><h3 style="margin-top:0">Change password</h3><form data-form="password" autocomplete="off"><div class="field"><label for="pw-cur">Current password</label><input id="pw-cur" name="current" type="password" autocomplete="current-password" required></div>' +
-        '<div class="field"><label for="pw-new">New password</label><input id="pw-new" name="next" type="password" autocomplete="new-password" minlength="8" required></div><button class="btn small" type="submit">Change password</button><div class="status-line" id="pw-msg" role="status"></div></form></div></div>';
+      var u = v.user, role = v.admin ? 'admin' : u.status;
+      var st = {
+        pending: ['pending', 'Pending approval', 'Your request is awaiting admin review. You can still browse the tree in the meantime — document scans and corrections unlock once you’re approved.'],
+        denied: ['denied', 'Access not approved', 'Your access request was not approved. Contact an admin if you think this is a mistake.'],
+        approved: ['approved', 'Approved member', 'Full record scans are unlocked and you can suggest corrections to any entry.'],
+        admin: ['approved', 'Admin', 'You can review requests and edit records directly.']
+      }[role] || ['pending', 'Pending approval', ''];
+      return '<div class="page-title"><h2>My Account</h2></div>' + lede +
+        '<div class="account-card"><div class="account-status-row"><span class="dot ' + st[0] + '"></span><div><h3 style="margin:0">' + st[1] + '</h3><p class="sub-copy" style="margin:4px 0 0">Signed in as ' + esc(u.email) + '</p></div></div>' +
+        '<p style="margin-bottom:0">' + st[2] + '</p>' + (v.admin ? '<p style="margin-bottom:0">Head to the <a href="/admin" class="linklike">Admin page</a> to review requests, or open any person’s page to edit records.</p>' : '') +
+        '<div style="margin-top:18px"><button class="btn ghost small" data-act="logout" type="button">Log out</button></div></div>' +
+        '<div class="account-card" style="margin-top:20px;max-width:420px"><h3 style="margin-top:0">Change password</h3><form data-form="password" autocomplete="off"><div class="field"><label for="pw-cur">Current password</label><input id="pw-cur" name="current" type="password" autocomplete="current-password" required></div>' +
+        '<div class="field"><label for="pw-new">New password</label><input id="pw-new" name="next" type="password" autocomplete="new-password" minlength="8" required placeholder="At least 8 characters"></div><button class="btn" type="submit">Update password</button><div class="status-line" id="pw-msg" role="status"></div></form></div>';
     }
-    return '<div class="page-title"><h2>Login / Register</h2></div><p class="lede">Notes, document scans, photographs and living relatives are restricted to approved family members. Anyone can browse the tree and see who is documented; an admin approves access to the records themselves.</p>' +
-      '<div class="forms-row"><div class="account-card"><h3 style="margin-top:0">Log in</h3><p class="sub-copy">Already registered? Sign in here.</p><form data-form="login"><div class="field"><label for="li-email">Email</label><input id="li-email" name="email" type="email" autocomplete="email" required></div>' +
-      '<div class="field"><label for="li-pw">Password</label><input id="li-pw" name="password" type="password" autocomplete="current-password" required></div><button class="btn small" type="submit">Log in</button><div class="status-line err" id="li-msg" role="alert"></div></form></div>' +
-      '<div class="account-card"><h3 style="margin-top:0">Create an account</h3><p class="sub-copy">New here? Request access. An admin will review it.</p><form data-form="register"><div class="field"><label for="rg-name">Your name</label><input id="rg-name" name="name" autocomplete="name" required></div>' +
-      '<div class="field"><label for="rg-email">Email</label><input id="rg-email" name="email" type="email" autocomplete="email" required></div>' +
-      '<div class="field"><label for="rg-pw">Password (8 or more characters)</label><input id="rg-pw" name="password" type="password" minlength="8" autocomplete="new-password" required></div>' +
-      '<div class="field"><label for="rg-note">How are you related?</label><textarea id="rg-note" name="note" maxlength="500" placeholder="For example: grandson of Tom and Mary Cuffe"></textarea></div>' +
+    return '<div class="page-title"><h2>Login / Register</h2></div>' + lede +
+      '<div class="account-card"><h3 style="margin-top:0">Sign in or create an account</h3><p class="sub-copy">New here? Create an account and request access. Already registered? Log in.</p>' +
+      '<div style="display:flex;gap:8px"><a href="/membership/register" class="btn small">Create account</a><a href="/membership/login" class="btn small ghost">Log in</a></div></div>';
+  }
+  function pageLogin() {
+    return '<a class="back-link" href="/membership">← Back to Login / Register</a><div class="page-title"><h2>Log in</h2></div>' +
+      '<div class="account-card" style="max-width:420px"><form data-form="login"><div class="field"><label for="li-email">Email</label><input id="li-email" name="email" type="email" autocomplete="email" required></div>' +
+      '<div class="field"><label for="li-pw">Password</label><input id="li-pw" name="password" type="password" autocomplete="current-password" required></div><button class="btn" type="submit">Log in</button><div class="status-line err" id="li-msg" role="alert"></div></form>' +
+      '<p class="sub-copy" style="margin-bottom:0">New here? <a href="/membership/register" class="linklike">Create an account</a></p></div>';
+  }
+  function pageRegister() {
+    return '<a class="back-link" href="/membership">← Back to Login / Register</a><div class="page-title"><h2>Create account</h2></div>' +
+      '<p class="lede">Register and request access. An admin reviews each request before document scans and living people’s details are unlocked; you can browse the tree in the meantime.</p>' +
+      '<div class="account-card" style="max-width:420px"><form data-form="register"><div class="field"><label for="rg-name">Name</label><input id="rg-name" name="name" autocomplete="name" required placeholder="Your full name"></div>' +
+      '<div class="field"><label for="rg-email">Email</label><input id="rg-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com"></div>' +
+      '<div class="field"><label for="rg-pw">Password</label><input id="rg-pw" name="password" type="password" minlength="8" autocomplete="new-password" required placeholder="At least 8 characters"></div>' +
+      '<div class="field"><label for="rg-note">How are you connected? (optional)</label><textarea id="rg-note" name="note" maxlength="500" placeholder="e.g. Grandson of Tom and Mary Cuffe"></textarea></div>' +
       '<details style="margin-bottom:14px"><summary class="muted" style="cursor:pointer;font-family:var(--mono);font-size:13px">Administrator setup code</summary><div class="field" style="margin-top:8px"><label for="rg-code">Setup code</label><input id="rg-code" name="setupCode" autocomplete="off"></div></details>' +
-      '<button class="btn small" type="submit">Create account</button><div class="status-line err" id="rg-msg" role="alert"></div></form></div></div>';
+      '<button class="btn" type="submit">Create account &amp; request access</button><div class="status-line err" id="rg-msg" role="alert"></div></form>' +
+      '<p class="sub-copy" style="margin-bottom:0">Already registered? <a href="/membership/login" class="linklike">Log in</a></p></div>';
   }
 
   /* ---------- help ---------- */
   function pageHelp() {
-    return '<div class="page-title"><h2>Help</h2></div><p class="lede">How to browse the tree, read a record, join the archive and, for administrators, look after it.</p>' +
-      '<div class="home-hero" style="padding:24px 30px"><div class="eyebrow">Getting started</div><ol class="manual-steps">' +
-      '<li><div><h4>Browse the tree</h4><p>Open Family Tree and select a person. The small + under a card shows or hides their children. Search finds a name or townland and opens the branch for you.</p></div></li>' +
-      '<li><div><h4>Read a record</h4><p>Each person has their dates, place, spouse, parents, children and brothers and sisters. Everyone linked there is clickable.</p></div></li>' +
-      '<li><div><h4>Ask for access</h4><p>Use Login / Register to create an account. Say how you are related. An admin reviews each request.</p></div></li>' +
-      '<li><div><h4>Once approved</h4><p>You can see notes, DNA matches, photographs and document scans, and send the administrator a correction from any person’s page.</p></div></li></ol></div>' +
-      '<div class="page-title" style="margin-top:34px"><h2>What each visitor sees</h2></div>' +
-      '<dl class="manual-anatomy"><div class="row"><dt>Anyone</dt><dd>Names, family links, dates and places for people who have died.</dd></div>' +
-      '<div class="row"><dt>Approved member</dt><dd>Everything above plus notes, DNA and USA flags, living relatives, photographs and documents.</dd></div>' +
-      '<div class="row"><dt>Admin</dt><dd>Everything above plus approving members, editing records and filing documents.</dd></div></dl>' +
-      '<div class="tip-note"><b>Living relatives.</b> People with no death date who were born in 1920 or later appear as “Living relative” to the public, and to members who are still waiting for approval. An admin can change this for any person.</div>' +
-      '<div class="tip-note warn"><b>Records can be incomplete.</b> Where the original tree showed only a first name, the surname has been taken from the father. Some people are still listed by first name only, and some children were grouped together on the original tree, so they carry no dates. If you can fill a gap, use Suggest a correction.</div>';
+    var toc = [['access-levels', 'Accounts & access levels'], ['getting-started', 'Getting started'], ['getting-around', 'Finding your way around'], ['reading-a-record', 'Reading a person’s record'], ['photos', 'The photo collection'], ['maps', 'Places, dates & the map'], ['contributing', 'Contributing as a member'], ['administering', 'Administering the archive'], ['faq', 'Questions & troubleshooting']];
+    var no = '<td class="muted-cell">no</td>';
+    var rowA = function (cls, label, cells) { return '<tr><td><span class="status-badge ' + cls + '">' + label + '</span></td>' + cells + '</tr>'; };
+    var live = '<td>yes</td><td>yes</td>' + no + no + no + no;
+    var sec = function (id, n, title, body) { return '<div class="doc-section" id="' + id + '"><h4>' + n + ' · ' + title + '</h4>' + body + '</div>'; };
+    var dl = function (rows) { return '<dl class="manual-anatomy">' + rows.map(function (r) { return '<div class="row"><dt>' + r[0] + '</dt><dd>' + r[1] + '</dd></div>'; }).join('') + '</dl>'; };
+    var steps = function (rows) { return '<ol class="manual-steps">' + rows.map(function (r) { return '<li><div><h4>' + r[0] + '</h4><p>' + r[1] + '</p></div></li>'; }).join('') + '</ol>'; };
+    var qa = function (q, a) { return '<p><b>' + q + '</b><br>' + a + '</p>'; };
+    return '<div class="page-title"><h2>User manual</h2><span class="meta">browsing, contributing &amp; administering</span></div>' +
+      '<p class="lede">How to read the tree, understand what’s public versus locked, send a correction as a member, and — for admins — how to run the archive day to day.</p>' +
+      '<ul class="manual-toc">' + toc.map(function (t, i) { return '<li><a href="#' + t[0] + '"><span class="n">0' + (i + 1) + '</span>' + t[1].replace('&', '&amp;') + '</a></li>'; }).join('') + '</ul>' +
+      sec('access-levels', '01', 'Accounts &amp; access levels',
+        '<p>Everything you can see and do is governed by one of five account states. Everyone registers the same way, and an admin decides what happens next.</p>' +
+        '<div class="table-scroll"><table class="archive-table"><thead><tr><th>Status</th><th>Browse tree &amp; archive</th><th>Deceased people’s details</th><th>Living people’s details</th><th>Notes, documents &amp; Photos tab</th><th>Suggest corrections</th><th>Edit records</th></tr></thead><tbody>' +
+        rowA('guest', 'Not signed in', '<td>yes</td><td>yes</td>' + no + no + no + no) + rowA('pending', 'Pending', '<td>yes</td><td>yes</td>' + no + no + no + no) + rowA('denied', 'Denied', '<td>yes</td><td>yes</td>' + no + no + no + no) +
+        rowA('approved', 'Approved', '<td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td>' + no) + rowA('admin', 'Admin', '<td>yes</td><td>yes</td><td>yes</td><td>yes</td><td class="muted-cell">edits directly instead</td><td>yes</td>') + '</tbody></table></div>' +
+        '<div class="tip-note"><b>Note</b> — for people who have died, the name, parents, spouse and their birth, marriage, death and burial dates, places and maps are visible to everyone, signed in or not. <i>Living</i> people are different: they appear as “Living relative”, and their record is visible to approved members only. Notes, DNA and USA flags, the <i>document scans</i> (newspaper clippings, photos, research notes and other records) and the Photos tab are also for approved members only.</div>') +
+      sec('getting-started', '02', 'Getting started', steps([
+        ['Register on the Login / Register page', 'Press “Create account” and give your name, email, a password of at least 8 characters, and — optionally — a line on how you connect to the family. That note is what the admin sees when deciding whether to approve you.'],
+        ['Wait for review', 'New accounts start as Pending. You can still browse the tree while you wait — you just won’t see document scans or be able to send corrections until an admin approves you.'],
+        ['Sign in', 'On later visits, press “Log in” on the same Login / Register page. Your status is shown on My Account once you’re signed in.'],
+        ['Change your password any time', 'From My Account, enter your current password and a new one (8 characters minimum). There is no self-service “forgot password” — if you’re locked out, ask an admin.']]) +
+        '<div class="tip-note"><b>First account on a fresh install</b> — the first person to register with the administrator setup code becomes an admin, so the archive always has someone able to approve everyone else. Every other registration starts pending.</div>') +
+      sec('getting-around', '03', 'Finding your way around', dl([
+        ['Overview', 'The homepage — an introduction to the archive, the root of the tree and the first generation, with the record and people counts so far.'],
+        ['Family Tree', 'A visual chart centred on one person: their parents above, themselves and their spouses in the middle, their children below. Click any name to re-centre the tree there; click the highlighted box to open that person’s record.'],
+        ['Archive', 'A searchable table of everyone in the archive — name (surname first), birth, parents, how many of the vital events (birth, marriage, death, burial) are on file, and document count. Click any column heading to sort by it; click it again to reverse the order.'],
+        ['Photos <span class="muted">(approved members)</span>', 'Every photograph in the archive in one grid — see <a href="#photos" class="linklike">The photo collection</a> below.'],
+        ['Login / Register', 'Register, log in, log out, change your password, and see your current approval status. Once you’re signed in this tab is labelled “My Account”.'],
+        ['Help', 'This manual.'],
+        ['Admin <span class="muted">(admins only)</span>', 'Approve or deny access requests, handle corrections, edit people and file documents and photographs.']])) +
+      sec('reading-a-record', '04', 'Reading a person’s record',
+        '<p>Every name in the tree or the Archive table links to a record page, built from the same sections top to bottom:</p>' + dl([
+          ['Vital records', 'Name, father, mother (each links to their own page when known), plus birth, death and burial — each with place, date and a small map when the place can be found. “Lived at” is the place noted on the original family tree.'],
+          ['Marriages', 'Every marriage on file for this person — spouse, place and date, with the children of that union listed beneath it. Witnesses are shown to approved members.'],
+          ['Document sections', 'Newspaper Articles, Photos, Research Notes, Other Records — four groups of catalogued material. Entries open the scan in a new tab.'],
+          ['Children', 'Everyone linked to this person as a parent, with the same birth / events / documents summary as the Archive table. Brothers and sisters are listed beneath it.']]) +
+        '<p>If you haven’t been approved yet, the document sections are replaced with a lock notice — the vital records table above it is still fully visible. For a living person the whole page is replaced with a notice that the record is for approved members only; the tree and archive show them as “Living relative”.</p>') +
+      sec('photos', '05', 'The photo collection',
+        '<p>The Photos tab, visible to approved members, gathers every photograph in the archive into one grid of thumbnails.</p>' + dl([
+          ['Filter by person', 'Type part of a name to show only that person’s photos.'],
+          ['Open a photo', 'Click a thumbnail to open it full screen, with the photo’s details and the person’s details (parents, birth, death, burial) beside it, and a link to their full record. Click the photo itself to open it full size in a new tab.'],
+          ['Move between photos', 'Previous / Next, or the left and right arrow keys. “Back to photos”, Esc, or the browser’s back button return to the grid.']])) +
+      sec('maps', '06', 'Places, dates &amp; the map',
+        '<p>Births, marriages, deaths, burials and “Lived at” places are typed in as plain text — a townland, parish or town, with the county or country if you can. Your browser looks the place up on OpenStreetMap and shows a small map under it; “View larger map” opens the full map. If a place can’t be found, no map is shown.</p>' +
+        '<p>Dates are free text on purpose — write <code>19 Aug 1882</code>, <code>c.1890</code>, or whatever precision the record actually supports.</p>') +
+      sec('contributing', '07', 'Contributing as a member',
+        '<p>Approved members can see everything, and can tell the administrator about anything that looks wrong or missing.</p>' + dl([
+          ['Suggest an edit', 'On a person’s page, “Suggest an edit” opens a short form — say what should change and, if you can, where the information comes from. It goes to the admin’s review list.'],
+          ['What happens next', 'An admin reads it, makes the change if it holds up, and marks it done or dismisses it. Members can’t change or delete records themselves.']])) +
+      sec('administering', '08', 'Administering the archive',
+        '<p>Admins see an “Edit” link on records instead of “Suggest an edit”, plus the Admin tab.</p>' + dl([
+          ['Access requests', 'Pending requests are listed with the note on how the person connects to the family. Approve or Deny with one click; approved members can also be made admins.'],
+          ['Suggested corrections', 'Every correction members have sent, newest first, with a link to the record. “Mark done” once you have dealt with it, or “Dismiss”.'],
+          ['People', 'Edit or add a person: names, dates, birth / death / burial / lived-at places, first marriage, father, mother, notes, DNA and USA flags. Each place shows on a map on the person page.'],
+          ['Privacy', 'Each person’s visibility can be left on Automatic (people born in 1920 or later with no death date are hidden as living), always hidden, or always shown.'],
+          ['Documents &amp; photos', 'File a scan (JPEG, PNG, WebP, GIF, PDF or text, up to 3 MB) under Newspaper, Photo, Research or Other and link it to a person. Delete an entry from the list below the form.']])) +
+      sec('faq', '09', 'Questions &amp; troubleshooting',
+        qa('I registered but can’t see any documents.', 'New accounts start as Pending. Browsing the tree, names and dates works right away; document scans unlock once an admin approves you.') +
+        qa('Why does someone show as “Living relative” with no details?', 'Living family members’ details are visible to approved members only, to protect their privacy. If they have in fact died, ask an admin to change their visibility.') +
+        qa('Where’s the Photos tab?', 'It appears in the menu once you’re signed in as an approved member.') +
+        qa('I forgot my password.', 'There’s no self-service reset. Ask an admin for help.') +
+        qa('Why can I see someone’s birth date but not their newspaper clipping?', 'By design: the tree and the vital facts of people who have died are public so anyone can browse the family’s shape; the scanned material behind those facts is reserved for approved members.') +
+        qa('Why is the very first account an admin?', 'So a brand-new archive always has someone who can approve everyone else. It only applies to the first registration made with the setup code.') +
+        qa('Some names look incomplete.', 'Where the original tree showed only a first name, the surname has been taken from the father, and a few people are still listed by first name only. If you can fill a gap, use Suggest an edit.'));
   }
 
   /* ---------- admin ---------- */
@@ -545,8 +664,6 @@
       var h = a.getAttribute('href');
       if (h && h.charAt(0) === '/' && h.indexOf('/api/') !== 0 && h.indexOf('//') !== 0) { e.preventDefault(); go(h); return; }
     }
-    var t = e.target.closest('[data-tog]');
-    if (t) { var id = +t.dataset.tog; if (S.expanded.has(id)) S.expanded.delete(id); else S.expanded.add(id); S.hit = null; drawTree(); return; }
     var n = e.target.closest('[data-go]');
     if (n) { go(n.dataset.go); return; }
     var s = e.target.closest('[data-sort]');
@@ -554,9 +671,7 @@
     var b = e.target.closest('[data-act]');
     if (!b) return;
     var act = b.dataset.act;
-    if (act === 'tree-open') { S.doc.people.forEach(function (p) { if (kidsOf(p.id).length) S.expanded.add(p.id); }); S.hit = null; S.center = true; drawTree(); }
-    else if (act === 'tree-reset') { resetTree(); S.center = true; S.treeQ = ''; $('#tq').value = ''; $('#tmatches').innerHTML = ''; drawTree(); }
-    else if (act === 'logout') { api('logout', { method: 'POST', body: {} }).then(refresh).then(function () { go('/'); }); }
+    if (act === 'logout') { api('logout', { method: 'POST', body: {} }).then(refresh).then(function () { go('/'); }); }
     else if (act === 'close') closeModal();
     else if (act === 'suggest') {
       var pid = +b.dataset.id, p = S.by.get(pid);
@@ -576,7 +691,7 @@
 
   document.addEventListener('input', function (e) {
     if (e.target.id === 'aq') { S.q = e.target.value; fillArchive(); }
-    else if (e.target.id === 'tq') { S.treeQ = e.target.value; runTreeSearch(true); }
+    else if (e.target.id === 'pq') { S.pq = e.target.value; fillPhotos(); }
   });
   document.addEventListener('change', function (e) {
     if (e.target.id === 'af') { S.filter = e.target.value; fillArchive(); }
@@ -623,7 +738,13 @@
     return '<option value="">New person</option>' + people.map(function (p) { return '<option value="' + p.id + '">' + esc(nm(p)) + ' (' + p.id + ', ' + esc(yrs(p)) + ')</option>'; }).join('');
   }
 
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeModal();
+    var pv = $('.photo-viewer');
+    if (!pv || e.target.closest('input,textarea,select')) return;
+    var to = e.key === 'Escape' ? pv.dataset.close : e.key === 'ArrowLeft' ? pv.dataset.prev : e.key === 'ArrowRight' ? pv.dataset.next : '';
+    if (to) go(to);
+  });
   window.addEventListener('popstate', render);
 
   /* ---------- boot ---------- */
@@ -631,7 +752,6 @@
     return Promise.all([api('me'), api('people'), api('archive')]).then(function (r) {
       S.viewer = { user: r[0].user, approved: r[0].approved, admin: r[0].admin };
       S.doc = r[1]; S.arch = r[2]; index();
-      if (!S.expanded.size) resetTree();
       if (rerender !== false) render();
     });
   }
