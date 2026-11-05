@@ -4,7 +4,7 @@
   var S = {
     viewer: { user: null, approved: false, admin: false },
     doc: null, arch: { locked: true, counts: {}, items: [] },
-    pq: '',
+    pq: '', treeAll: false,
     sort: { key: 'name', dir: 1 }, q: '', filter: 'all',
     by: new Map(), kids: new Map(), gen: new Map(), dc: new Map(),
     admin: { users: [], suggestions: [], msg: '', err: false }
@@ -186,6 +186,7 @@
     v.innerHTML = html;
     document.title = (m && S.by.get(+m[1]) ? nm(S.by.get(+m[1])) + ' · ' : '') + 'The Cuffe Record';
     if (m) afterMaps();
+    if (tm && S.treeAll) { var tw = $('.tree-wrap'), tr = $('.tnode.root rect'); if (tw && tr) tw.scrollLeft = Math.max(0, +tr.getAttribute('x') + EW / 2 - tw.clientWidth / 2); }
     if (picker) afterPicker();
     if (p === '/archive') afterArchive();
     if (p === '/admin') afterAdmin();
@@ -250,9 +251,39 @@
       (q ? '<div class="years">' + esc(yearsLabel(q)) + '</div>' : '') + (q && !focal && !q.private && kidsOf(q.id).length ? '<div class="gcount">' + kidsOf(q.id).length + ' child' + (kidsOf(q.id).length > 1 ? 'ren' : '') + ' on file</div>' : '') + '</div></foreignObject></g>';
   }
   function tcurve(x1, y1, x2, y2) { return '<path class="tlink" d="M' + x1 + ',' + y1 + ' C ' + x1 + ',' + (y1 + y2) / 2 + ' ' + x2 + ',' + (y1 + y2) / 2 + ' ' + x2 + ',' + y2 + '"/>'; }
+  function treeBar() {
+    return '<div style="margin:6px 0 10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn small ghost" data-act="tree-all" type="button">' + (S.treeAll ? 'Show focused view' : 'Expand all') + '</button>' +
+      '<button class="btn small ghost" data-act="tree-preview" type="button">Preview &amp; save as PDF</button></div>';
+  }
+  /* every descendant of one person, all branches open */
+  var EW = 150, EH = 72, EGX = 10, EGY = 44;
+  function pageTreeAll(p) {
+    var seen = {}; seen[p.id] = 1;
+    function build(i) {
+      var ch = kidsOf(i).filter(function (c) { return !seen[c] && (seen[c] = 1); }).map(build);
+      var w = ch.length ? Math.max(EW, ch.reduce(function (a, c) { return a + c.w; }, 0) + EGX * (ch.length - 1)) : EW;
+      return { id: i, ch: ch, w: w };
+    }
+    var root = p.private ? { id: p.id, ch: [], w: EW } : build(p.id), nodes = [], links = [], maxD = 0;
+    (function place(n, left, d) {
+      n.x = left + n.w / 2; n.y = 10 + d * (EH + EGY); maxD = Math.max(maxD, d); nodes.push(n);
+      var used = n.ch.reduce(function (a, c) { return a + c.w; }, 0) + EGX * Math.max(0, n.ch.length - 1), cx = left + (n.w - used) / 2;
+      n.ch.forEach(function (c) { links.push([n, c]); place(c, cx, d + 1); cx += c.w + EGX; });
+    })(root, 10, 0);
+    var W = root.w + 20, H = 20 + (maxD + 1) * (EH + EGY), out = [];
+    links.forEach(function (l) { var a = l[0], b = l[1], mid = a.y + EH + EGY / 2; out.push('<path class="tlink" d="M' + a.x + ' ' + (a.y + EH) + 'V' + mid + 'H' + b.x + 'V' + b.y + '"/>'); });
+    nodes.forEach(function (n) {
+      var q = S.by.get(n.id);
+      out.push('<g class="tnode' + (n.id === p.id ? ' root' : '') + '" data-go="/tree/' + n.id + '"><rect x="' + (n.x - EW / 2) + '" y="' + n.y + '" width="' + EW + '" height="' + EH + '" rx="2"/><foreignObject x="' + (n.x - EW / 2) + '" y="' + n.y + '" width="' + EW + '" height="' + EH + '"><div class="tnode-body"><div class="name">' + esc(dn(q)) + '</div><div class="years">' + esc(yearsLabel(q)) + '</div></div></foreignObject></g>');
+    });
+    return '<a class="back-link" href="/tree">\u2190 Whole tree</a><div class="page-title"><h2>Family tree</h2><span class="meta">' + esc(dn(p)) + ' (' + esc(yearsLabel(p)) + ') \u00b7 ' + (nodes.length - 1) + ' descendants shown</span></div>' + treeBar() +
+      '<p class="lede">Every branch is open. Click any name to start the tree from that person; scroll sideways to see all of it.</p>' +
+      '<div class="tree-wrap"><svg class="tree-svg tree-all" viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" role="img" aria-label="Descendants of ' + esc(dn(p)) + '">' + out.join('') + '</svg></div>';
+  }
   function pageTree(id) {
     var p = S.by.get(id);
-    if (!p) return '<a class="back-link" href="/tree">← Whole tree</a><p class="empty-note">That person is not in the record.</p>';
+    if (!p) return '<a class="back-link" href="/tree">\u2190 Whole tree</a><p class="empty-note">That person is not in the record.</p>';
+    if (S.treeAll) return pageTreeAll(p);
     var unlocked = !p.private;
     var father = p.fa ? S.by.get(p.fa) : null, mother = p.mo ? S.by.get(p.mo) : null;
     var all = unlocked ? kidsOf(id).map(function (i) { return S.by.get(i); }) : [];
@@ -298,7 +329,7 @@
     flat.forEach(function (k, i) { out.push(tbox(k.c, '', left + spacing * i + TW / 2, childrenY, false)); });
     return '<a class="back-link" href="/tree">← Whole tree</a>' +
       '<div class="page-title"><h2>Family tree</h2><span class="meta">' + esc(dn(p)) + ' (' + esc(yearsLabel(p)) + ')' + (unlocked ? ' &amp; ' + n + ' children' : '') + '</span></div>' +
-      '<div style="margin:6px 0 10px"><button class="btn small ghost" data-act="tree-preview" type="button">Preview &amp; save as PDF</button></div>' +
+      treeBar() +
       '<p class="lede">Click the highlighted box to open ' + esc(dn(p)) + '’s full record — click any other name to re-centre the tree there.</p>' +
       (!unlocked ? '<p class="lede">' + esc(dn(p)) + ' is a living family member, so their marriages and children are visible to approved members only.</p>' : '') +
       '<div class="tree-wrap"><svg class="tree-svg" viewBox="0 0 ' + width + ' ' + height + '" width="100%" style="display:block" role="img" aria-label="Family tree">' + out.join('') + '</svg></div>';
@@ -779,6 +810,7 @@
     }
     else if (act === 'mp-search') mpSearch();
     else if (act === 'tree-preview') treePreview();
+    else if (act === 'tree-all') { S.treeAll = !S.treeAll; render(); }
     else if (act === 'tp-close') closePreview();
     else if (act === 'tp-print') printPreview();
     else if (act === 'marr-del') {

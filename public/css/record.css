@@ -30,3 +30,4 @@
   .tree-preview,.tree-preview *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   body{background:#fff}.grain{display:none}
 }
+.tree-all .tnode .name{font-size:15px}.tree-all .tnode.root .name{font-size:16px}.tree-all .tnode .years{font-size:12px}
