@@ -1,0 +1,17 @@
+.archive-search{max-width:340px;margin:16px 0 8px}
+.archive-table .kin a{color:var(--ink-soft);font-size:15px}
+.archive-table .kin a:hover{color:var(--brass-deep)}
+.archive-table .kin .vt-empty{font-size:15px}
+.archive-table td em,.children-table td em{color:var(--ink-soft)}
+.profile-head .page-title{margin-bottom:2px}
+.profile-actions{margin-top:14px}
+.vt-event+.vt-event{margin-top:16px}
+.vt-sub{font-family:var(--mono);color:var(--ink-soft);font-size:13px}
+.vt-sub a{font-size:13px}
+.vt-map{margin-top:10px;max-width:680px}
+.vt-map iframe{display:block;width:100%;height:170px;border:1px solid var(--rule);filter:sepia(.18) saturate(.9)}
+.map-link{display:inline-block;margin-top:6px;font-family:var(--mono);font-size:12.5px;color:var(--brass-deep);border-bottom:1px solid var(--brass-deep)}
+.lock-title{font-family:var(--display);font-size:20px;font-weight:700}
+.doc-files{margin-top:24px}
+.doc-files h4:first-child{margin-top:0}
+@media (max-width:640px){.vitals-table th{width:96px;padding:10px}.archive-table th,.archive-table td{padding:8px}}

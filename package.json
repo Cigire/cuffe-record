@@ -1,0 +1,15 @@
+{
+  "name": "cuffe-record",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The Cuffe Record: a family archive with admin-approved membership",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "dev": "node test/server.js"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.0"
+  }
+}

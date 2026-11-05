@@ -1,0 +1,4 @@
+node_modules
+.localdata
+.vercel
+.env*
