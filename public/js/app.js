@@ -298,6 +298,7 @@
     flat.forEach(function (k, i) { out.push(tbox(k.c, '', left + spacing * i + TW / 2, childrenY, false)); });
     return '<a class="back-link" href="/tree">← Whole tree</a>' +
       '<div class="page-title"><h2>Family tree</h2><span class="meta">' + esc(dn(p)) + ' (' + esc(yearsLabel(p)) + ')' + (unlocked ? ' &amp; ' + n + ' children' : '') + '</span></div>' +
+      '<div style="margin:6px 0 10px"><button class="btn small ghost" data-act="tree-preview" type="button">Preview &amp; save as PDF</button></div>' +
       '<p class="lede">Click the highlighted box to open ' + esc(dn(p)) + '’s full record — click any other name to re-centre the tree there.</p>' +
       (!unlocked ? '<p class="lede">' + esc(dn(p)) + ' is a living family member, so their marriages and children are visible to approved members only.</p>' : '') +
       '<div class="tree-wrap"><svg class="tree-svg" viewBox="0 0 ' + width + ' ' + height + '" width="100%" style="display:block" role="img" aria-label="Family tree">' + out.join('') + '</svg></div>';
@@ -588,6 +589,28 @@
         qa('Some names look incomplete.', 'Where the original tree showed only a first name, the surname has been taken from the father, and a few people are still listed by first name only. If you can fill a gap, use Suggest an edit.'));
   }
 
+  /* ---------- family tree preview and PDF ---------- */
+  function treePreview() {
+    var wrap = $('.tree-wrap'), tm = /^\/tree\/(\d+)$/.exec(path());
+    if (!wrap || !tm) return;
+    var p = S.by.get(+tm[1]), svg = wrap.querySelector('svg').cloneNode(true);
+    svg.removeAttribute('style'); svg.setAttribute('width', '100%');
+    var ov = document.createElement('div'); ov.className = 'tree-preview'; ov.dataset.name = dn(p);
+    ov.innerHTML = '<div class="tp-bar"><span class="tp-hint">Preview \u2014 this is how the page will print.</span><span><button class="btn small" data-act="tp-print" type="button">Save as PDF</button> <button class="btn small ghost" data-act="tp-close" type="button">Close</button></span></div>' +
+      '<div class="tp-page"><div class="tp-head"><div class="tp-eyebrow">The Cuffe Record</div><h2>Family tree: ' + esc(dn(p)) + '</h2><div class="tp-sub">' + esc(yearsLabel(p)) + '</div></div><div class="tp-svg"></div>' +
+      '<div class="tp-foot">The Cuffe Record \u00b7 printed ' + esc(new Date().toLocaleDateString('en-IE', { day: 'numeric', month: 'long', year: 'numeric' })) + '</div></div>';
+    ov.querySelector('.tp-svg').appendChild(svg);
+    document.body.appendChild(ov); document.body.classList.add('tp-open');
+  }
+  function closePreview() { var o = $('.tree-preview'); if (o) o.remove(); document.body.classList.remove('tp-open'); }
+  function printPreview() {
+    var o = $('.tree-preview'), old = document.title;
+    document.title = 'Cuffe family tree - ' + (o ? o.dataset.name : '');
+    var back = function () { document.title = old; window.removeEventListener('afterprint', back); };
+    window.addEventListener('afterprint', back);
+    window.print();
+  }
+
   /* ---------- event / marriage edit pages (location picker with a map) ---------- */
   var MP = { map: null, marker: null };
   function pickerHtml(loc, lat, lng, date, label) {
@@ -755,6 +778,9 @@
       var m = modal('<h3>Suggest a correction</h3><div class="sub">' + esc(nm(p)) + '</div><form data-form="suggest" data-id="' + pid + '"><div class="field"><label for="sg-text">What should change?</label><textarea id="sg-text" name="text" maxlength="1000" required placeholder="For example: born 14 March 1891, not 1892. Source: parish register.">' + (b.dataset.ctx ? esc(b.dataset.ctx) + ': ' : '') + '</textarea></div><div class="status-line err" id="sg-msg" role="alert"></div><div class="modal-actions"><button class="btn small ghost" data-act="close" type="button">Cancel</button><button class="btn small" type="submit">Send</button></div></form>');
     }
     else if (act === 'mp-search') mpSearch();
+    else if (act === 'tree-preview') treePreview();
+    else if (act === 'tp-close') closePreview();
+    else if (act === 'tp-print') printPreview();
     else if (act === 'marr-del') {
       if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Confirm delete'; return; }
       api('admin/person/' + b.dataset.id + '/marriage', { method: 'POST', body: { sp: +b.dataset.sp, remove: true } }).then(function () { return refresh(false); }).then(function () { go('/person/' + b.dataset.id); }).catch(function (er) { setMsg('ep-msg', er.message, true); });
@@ -842,7 +868,7 @@
   }
 
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') closeModal();
+    if (e.key === 'Escape') { closeModal(); closePreview(); }
     var pv = $('.photo-viewer');
     if (!pv || e.target.closest('input,textarea,select')) return;
     var to = e.key === 'Escape' ? pv.dataset.close : e.key === 'ArrowLeft' ? pv.dataset.prev : e.key === 'ArrowRight' ? pv.dataset.next : '';

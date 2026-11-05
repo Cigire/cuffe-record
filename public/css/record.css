@@ -9,3 +9,24 @@
 .doc-files{margin-top:24px}
 .doc-files h4:first-child{margin-top:0}
 @media (max-width:640px){.vitals-table th{width:96px;padding:10px}.archive-table th,.archive-table td{padding:8px}}
+
+.tree-preview{position:fixed;inset:0;z-index:60;background:var(--paper-deep);overflow:auto;padding:18px 24px 30px}
+.tp-bar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;max-width:1200px;margin:0 auto 14px}
+.tp-hint{font-family:var(--mono);font-size:13px;color:var(--ink-soft)}
+.tp-page{background:#fff;color:#262a3b;max-width:1200px;margin:0 auto;padding:26px 28px;border:1px solid var(--rule);box-shadow:var(--shadow)}
+.tp-head{border-bottom:1px solid var(--rule);padding-bottom:10px;margin-bottom:14px}
+.tp-eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:var(--brass-deep)}
+.tp-head h2{font-family:var(--display);font-size:30px;margin:4px 0 0}
+.tp-sub{font-family:var(--mono);font-size:13px;color:var(--ink-soft)}
+.tp-svg svg{display:block;width:100%;height:auto}
+.tp-foot{font-family:var(--mono);font-size:11px;color:var(--ink-soft);margin-top:12px;border-top:1px solid var(--rule);padding-top:8px}
+.tp-page .tnode rect{fill:#faf6ea}.tp-page .tnode.root rect{fill:#262a3b}
+@page{size:A4 landscape;margin:12mm}
+@media print{
+  body.tp-open #app{display:none!important}
+  .tree-preview{position:static;background:#fff;padding:0;overflow:visible}
+  .tp-bar{display:none}
+  .tp-page{border:none;box-shadow:none;padding:0;max-width:none}
+  .tree-preview,.tree-preview *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  body{background:#fff}.grain{display:none}
+}
