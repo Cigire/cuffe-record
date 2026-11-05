@@ -454,4 +454,4 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,te
 .tnode .name{flex:0 0 auto;max-height:3.7em}.tnode .years,.tnode .gcount{flex:0 0 auto}
 a.btn{display:inline-block;text-decoration:none}
 .archive-table .sort-link{background:none;border:none;font:inherit;letter-spacing:inherit;text-transform:inherit;padding:0;cursor:pointer}
-.vt-map:empty{display:none}
+.map-slot:empty{display:none}

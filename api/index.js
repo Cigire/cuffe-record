@@ -264,9 +264,10 @@ async function handle(req, res) {
         if (id) {
           target = doc.people.find((p) => p.id === id);
           if (!target) return { error: 'No such person.' };
-          [['bplace', 'blat', 'blng'], ['dplace', 'dlat', 'dlng'], ['burial', 'klat', 'klng']].forEach((k) => { if ((target[k[0]] || '') !== clean[k[0]]) { delete target[k[1]]; delete target[k[2]]; } });
-          Object.assign(target, clean);
-          ['fa', 'mo'].forEach((k) => { const n = one(body[k], id); if (n) target[k] = n; else delete target[k]; });
+          [['bplace', 'blat', 'blng'], ['dplace', 'dlat', 'dlng'], ['burial', 'klat', 'klng']].forEach((k) => { if (body[k[0]] !== undefined && (target[k[0]] || '') !== clean[k[0]]) { delete target[k[1]]; delete target[k[2]]; } });
+          // only fields actually sent are changed, so a partial request can never blank a record
+          Object.keys(clean).forEach((k) => { if (body[k] !== undefined) target[k] = clean[k]; });
+          ['fa', 'mo'].forEach((k) => { if (body[k] === undefined) return; const n = one(body[k], id); if (n) target[k] = n; else delete target[k]; });
         } else {
           const sp = ids(body.sp).filter((x) => known.has(x)).slice(0, 2);
           target = { id: Math.max(...doc.people.map((p) => p.id)) + 1, ...clean, sp };
@@ -276,7 +277,7 @@ async function handle(req, res) {
           doc.people.push(target);
           sp.forEach((s) => { const o = doc.people.find((p) => p.id === s); if (o && !(o.sp || []).includes(target.id) && (o.sp || []).length < 2) (o.sp = o.sp || []).push(target.id); });
         }
-        Object.keys(clean).forEach((k) => { if (clean[k] === '' || clean[k] === false || (k === 'privacy' && clean[k] === 'auto')) delete target[k]; });
+        Object.keys(clean).forEach((k) => { if ((id ? body[k] !== undefined : true) && (clean[k] === '' || clean[k] === false || (k === 'privacy' && clean[k] === 'auto'))) delete target[k]; });
         if (body.mdate !== undefined || body.mplace !== undefined) people.setMarriage(doc, target, mdate, mplace);
         target.mod = today;
         doc.edited = true;

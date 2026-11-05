@@ -84,7 +84,7 @@
   function mapBox(place, lat, lng) {
     var has = lat != null && lng != null;
     if (!has && (!place || /[;\d]/.test(place) && /born|died/i.test(place))) return '';
-    return '<div class="vt-map" data-place="' + esc(place || '') + '"' + (has ? ' data-lat="' + lat + '" data-lng="' + lng + '"' : '') + '></div>';
+    return '<div class="map-slot" data-place="' + esc(place || '') + '"' + (has ? ' data-lat="' + lat + '" data-lng="' + lng + '"' : '') + '></div>';
   }
   var geoCache = {};
   try { geoCache = JSON.parse(localStorage.getItem('cr_geo') || '{}'); } catch (e) { geoCache = {}; }
@@ -115,7 +115,7 @@
       '<a class="map-link" target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=' + g.lat.toFixed(5) + '&mlon=' + g.lon.toFixed(5) + '#map=13/' + g.lat.toFixed(5) + '/' + g.lon.toFixed(5) + '">View larger map \u2192</a>';
   }
   function afterMaps() {
-    var els = Array.prototype.slice.call(document.querySelectorAll('.vt-map'));
+    var els = Array.prototype.slice.call(document.querySelectorAll('.map-slot'));
     var chain = Promise.resolve();
     els.forEach(function (el) {
       chain = chain.then(function () {
