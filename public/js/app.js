@@ -81,9 +81,10 @@
   }
   function parentCell(id) { var q = id ? S.by.get(id) : null; return q ? '<a href="/person/' + q.id + '">' + esc(dn(q)) + '</a>' : 'unknown'; }
   /* maps: the place name is looked up in the visitor's browser on OpenStreetMap and remembered there */
-  function mapBox(place) {
-    if (!place || /[;\d]/.test(place) && /born|died/i.test(place)) return '';
-    return '<div class="vt-map" data-place="' + esc(place) + '"></div>';
+  function mapBox(place, lat, lng) {
+    var has = lat != null && lng != null;
+    if (!has && (!place || /[;\d]/.test(place) && /born|died/i.test(place))) return '';
+    return '<div class="vt-map" data-place="' + esc(place || '') + '"' + (has ? ' data-lat="' + lat + '" data-lng="' + lng + '"' : '') + '></div>';
   }
   var geoCache = {};
   try { geoCache = JSON.parse(localStorage.getItem('cr_geo') || '{}'); } catch (e) { geoCache = {}; }
@@ -119,6 +120,7 @@
     els.forEach(function (el) {
       chain = chain.then(function () {
         if (!el.isConnected) return null;
+        if (el.dataset.lat) { drawMap(el, { lat: +el.dataset.lat, lon: +el.dataset.lng }); return null; }
         var cached = Object.prototype.hasOwnProperty.call(geoCache, el.dataset.place);
         return geocode(el.dataset.place).then(function (g) {
           if (!el.isConnected) return;
@@ -166,8 +168,12 @@
     if ((p === '/membership/login' || p === '/membership/register') && S.viewer.user) { history.replaceState(null, '', '/membership'); p = '/membership'; }
     shell(activeTab(p));
     var m = /^\/person\/(\d+)$/.exec(p), tm = /^\/tree\/(\d+)$/.exec(p);
-    var html;
-    if (m) html = pagePerson(+m[1]);
+    var em = /^\/person\/(\d+)\/events\/(birth|death|burial)\/edit$/.exec(p), mm = /^\/person\/(\d+)\/marriages\/(add|\d+\/edit)$/.exec(p);
+    var html, picker = false;
+    if ((em || mm) && (!S.viewer.admin || !S.by.get(+(em || mm)[1]))) { history.replaceState(null, '', '/person/' + (em || mm)[1]); p = path(); m = /^\/person\/(\d+)$/.exec(p); em = mm = null; }
+    if (em) { html = pageEventEdit(+em[1], em[2]); picker = true; }
+    else if (mm) { html = pageMarriageEdit(+mm[1], mm[2] === 'add' ? null : +mm[2].split('/')[0]); picker = true; }
+    else if (m) html = pagePerson(+m[1]);
     else if (tm) html = pageTree(+tm[1]);
     else if (p === '/membership/login') html = pageLogin();
     else if (p === '/membership/register') html = pageRegister();
@@ -180,6 +186,7 @@
     v.innerHTML = html;
     document.title = (m && S.by.get(+m[1]) ? nm(S.by.get(+m[1])) + ' · ' : '') + 'The Cuffe Record';
     if (m) afterMaps();
+    if (picker) afterPicker();
     if (p === '/archive') afterArchive();
     if (p === '/admin') afterAdmin();
   }
@@ -413,16 +420,16 @@
     var unk = function (t, w) { return t ? esc(t) : '<span class="vt-empty">' + w + '</span>'; };
     var admin = S.viewer.admin, member = S.viewer.approved && !admin;
     var evBtn = function (type, label, has) {
-      if (admin) return '<button class="btn ghost small" data-act="ev-edit" data-id="' + id + '" data-type="' + type + '" type="button">' + (has ? 'Edit' : '+ Add') + '</button>';
+      if (admin) return '<a class="btn ghost small" href="/person/' + id + '/events/' + type + '/edit">' + (has ? 'Edit' : '+ Add') + '</a>';
       if (member) return '<button class="btn ghost small" data-act="suggest" data-id="' + id + '" data-ctx="' + label + '" type="button">' + (has ? 'Suggest edit' : '+ Add') + '</button>';
       return '';
     };
-    var ev = function (place, date, type, label) {
-      if (!place && !date) return '<div class="vt-detail"><span class="vt-empty">Not recorded yet</span>' + evBtn(type, label, false) + '</div>';
-      return '<div class="vt-event"><div class="vt-detail"><span>' + unk(place, 'Location unknown') + ' \u00b7 ' + unk(date, 'date unknown') + '</span>' + evBtn(type, label, true) + '</div>' + (place ? mapBox(place) : '') + '</div>';
+    var ev = function (place, date, type, label, lat, lng) {
+      if (!place && !date && lat == null) return '<div class="vt-detail"><span class="vt-empty">Not recorded yet</span>' + evBtn(type, label, false) + '</div>';
+      return '<div class="vt-event"><div class="vt-detail"><span>' + unk(place, 'Location unknown') + ' \u00b7 ' + unk(date, 'date unknown') + '</span>' + evBtn(type, label, true) + '</div>' + mapBox(place, lat, lng) + '</div>';
     };
     var vit = row('Name', esc(dn(p))) + row('Father', parentCell(p.fa)) + row('Mother', parentCell(p.mo)) +
-      row('Birth', ev(p.bplace, p.born, 'birth', 'Birth')) + row('Death', ev(p.dplace, p.died, 'death', 'Death')) + row('Burial', ev(p.burial, '', 'burial', 'Burial'));
+      row('Birth', ev(p.bplace, p.born, 'birth', 'Birth', p.blat, p.blng)) + row('Death', ev(p.dplace, p.died, 'death', 'Death', p.dlat, p.dlng)) + row('Burial', ev(p.burial, p.kdate, 'burial', 'Burial', p.klat, p.klng));
     if (p.place) vit += row('Lived at', '<div class="vt-event"><div class="vt-detail"><span>' + esc(p.place) + '</span></div>' + mapBox(p.place) + '</div>');
     vit += row('Documents', nDocs + ' on file' + (S.arch.locked ? ' (' + (S.viewer.user ? 'available once an admin approves your account' : 'sign in as an approved member to view') + ')' : ''));
     if (S.viewer.approved) {
@@ -440,12 +447,12 @@
         var sp = m.sp ? S.by.get(m.sp) : null;
         var who = sp ? '<a href="/person/' + sp.id + '">' + esc(dn(sp)) + '</a>' : '<span class="vt-empty">Not recorded yet</span>';
         return '<tr><th>' + (ORD[i] || (i + 1) + 'th') + ' marriage</th><td><div class="vt-detail"><span>' + who + ((m.date || m.place) ? ' \u00b7 ' + unk(m.place, 'location unknown') + ' \u00b7 ' + unk(m.date, 'date unknown') : '') + '</span>' +
-          (admin ? '<button class="btn ghost small" data-act="marr-edit" data-id="' + id + '" data-sp="' + (m.sp || '') + '" type="button">Edit</button>' : member ? '<button class="btn ghost small" data-act="suggest" data-id="' + id + '" data-ctx="Marriage" type="button">Suggest edit</button>' : '') + '</div>' +
-          (m.wit && S.viewer.approved ? '<div class="vt-sub">Witnesses: ' + esc(m.wit) + '</div>' : '') + (m.place ? mapBox(m.place) : '') +
+          (admin ? '<a class="btn ghost small" href="/person/' + id + '/marriages/' + (m.sp || 0) + '/edit">Edit</a>' : member ? '<button class="btn ghost small" data-act="suggest" data-id="' + id + '" data-ctx="Marriage" type="button">Suggest edit</button>' : '') + '</div>' +
+          (m.wit && S.viewer.approved ? '<div class="vt-sub">Witnesses: ' + esc(m.wit) + '</div>' : '') + mapBox(m.place, m.lat, m.lng) +
           '</td></tr>';
       }).join('') + '</tbody></table>';
     } else marrHtml = '<p class="empty-note" style="padding:6px 0">No marriages recorded yet.</p>';
-    marrHtml += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">' + (admin ? '<button class="btn ghost small" data-act="marr-add" data-id="' + id + '" type="button">+ Add marriage</button>' : member ? '<button class="btn ghost small" data-act="suggest" data-id="' + id + '" data-ctx="Marriage" type="button">+ Add marriage</button>' : '') + '</div>';
+    marrHtml += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">' + (admin ? '<a class="btn ghost small" href="/person/' + id + '/marriages/add">+ Add marriage</a>' : member ? '<button class="btn ghost small" data-act="suggest" data-id="' + id + '" data-ctx="Marriage" type="button">+ Add marriage</button>' : '') + '</div>';
     var docHtml;
     if (S.arch.locked) docHtml = '<div class="locked-block"><span class="lock-icon" aria-hidden="true">\u{1F512}</span><div style="font-family:var(--display);font-size:19px">' + nDocs + ' document' + (nDocs === 1 ? '' : 's') + ' on file for ' + esc(dn(p)) + '</div><p>Newspaper clippings, photos and research notes are visible to approved members.</p><a href="/membership" class="btn">Request access</a></div>';
     else {
@@ -581,6 +588,68 @@
         qa('Some names look incomplete.', 'Where the original tree showed only a first name, the surname has been taken from the father, and a few people are still listed by first name only. If you can fill a gap, use Suggest an edit.'));
   }
 
+  /* ---------- event / marriage edit pages (location picker with a map) ---------- */
+  var MP = { map: null, marker: null };
+  function pickerHtml(loc, lat, lng, date, label) {
+    return '<div class="field"><label for="mp-loc">Location</label><input id="mp-loc" name="location" type="text" maxlength="120" value="' + esc(loc || '') + '" placeholder="e.g. Clonruff, Ballymoe, Co. Galway, Ireland"></div>' +
+      '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><button type="button" class="btn ghost small" data-act="mp-search">Search this location</button><span id="mp-status" style="font-family:var(--mono);font-size:10.5px;color:var(--ink-soft)">Click the map to drop a pin.</span></div>' +
+      '<div id="mp-map" class="map-picker"></div>' +
+      '<div style="display:flex;gap:10px"><div class="field" style="flex:1"><label for="mp-lat">Latitude</label><input id="mp-lat" name="lat" type="text" readonly value="' + (lat != null ? lat : '') + '" placeholder="53.7000"></div>' +
+      '<div class="field" style="flex:1"><label for="mp-lng">Longitude</label><input id="mp-lng" name="lng" type="text" readonly value="' + (lng != null ? lng : '') + '" placeholder="-8.4000"></div></div>' +
+      '<div class="field"><label for="mp-date">Date</label><input id="mp-date" name="date" type="text" maxlength="60" value="' + esc(date || '') + '" placeholder="e.g. 19 Aug 1882, or c.1890"></div>';
+  }
+  function pageEventEdit(id, key) {
+    var p = S.by.get(id);
+    var f = { birth: ['Birth', p.bplace, p.blat, p.blng, p.born], death: ['Death', p.dplace, p.dlat, p.dlng, p.died], burial: ['Burial', p.burial, p.klat, p.klng, p.kdate] }[key];
+    return '<div class="page-title"><h2>' + f[0] + ' record</h2><span class="meta">' + esc(dn(p)) + '</span></div>' +
+      '<form data-form="evpage" data-id="' + id + '" data-type="' + key + '" style="max-width:480px">' + pickerHtml(f[1], f[2], f[3], f[4]) +
+      '<div class="modal-actions" style="justify-content:flex-start"><button class="btn" type="submit">Save</button></div><div class="status-line err" id="ep-msg" role="alert"></div></form>';
+  }
+  function pageMarriageEdit(id, sp) {
+    var p = S.by.get(id), cur = sp ? ((p.marr || []).filter(function (x) { return x.sp === sp; })[0] || { sp: sp }) : {};
+    var opts = '<option value="">Choose a spouse\u2026</option>' + S.doc.people.filter(function (x) { return x.id !== id; }).sort(function (x, y) { return dn(x).localeCompare(dn(y)); }).map(function (x) { return '<option value="' + x.id + '"' + (x.id === sp ? ' selected' : '') + '>' + esc(dn(x)) + ' (' + x.id + ')</option>'; }).join('');
+    return '<div class="page-title"><h2>' + (sp ? 'Edit marriage' : 'Add marriage') + '</h2><span class="meta">' + esc(dn(p)) + '</span></div>' +
+      '<form data-form="marrpage" data-id="' + id + '" style="max-width:480px"><div class="field"><label for="mg-sp">Spouse</label><select id="mg-sp" name="sp"' + (sp ? ' disabled' : '') + '>' + opts + '</select></div>' +
+      pickerHtml(cur.place, cur.lat, cur.lng, cur.date) + '<div class="field"><label for="mg-wit">Witnesses</label><input id="mg-wit" name="wit" type="text" maxlength="200" value="' + esc(cur.wit || '') + '"></div>' +
+      '<div class="modal-actions" style="justify-content:flex-start"><button class="btn" type="submit">Save</button></div><div class="status-line err" id="ep-msg" role="alert"></div></form>' +
+      (sp ? '<div class="doc-section"><h4>Danger zone</h4><p class="empty-note" style="padding:0 0 10px">Deleting this marriage removes it, and the spouse link, from both people. Children keep their father and mother.</p><button class="btn danger small" data-act="marr-del" data-id="' + id + '" data-sp="' + sp + '" type="button">Delete this marriage</button></div>' : '');
+  }
+  function mpStatus(t) { var e = $('#mp-status'); if (e) e.textContent = t; }
+  function mpPin(la, ln, fillIfEmpty) {
+    $('#mp-lat').value = la.toFixed(6); $('#mp-lng').value = ln.toFixed(6);
+    if (MP.map) { if (MP.marker) MP.map.removeLayer(MP.marker); MP.marker = L.marker([la, ln]).addTo(MP.map); MP.map.setView([la, ln], Math.max(MP.map.getZoom(), 12)); }
+    mpStatus('Looking up place name\u2026');
+    return fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat=' + la + '&lon=' + ln).then(function (r) { return r.json(); }).then(function (d) {
+      if (d && d.display_name) { mpStatus('Pinned: ' + d.display_name.slice(0, 70)); if (fillIfEmpty && !$('#mp-loc').value.trim()) $('#mp-loc').value = d.display_name; }
+      else mpStatus('Pinned. Could not resolve a place name for that spot.');
+    }).catch(function () { mpStatus('Pinned.'); });
+  }
+  function mpSearch() {
+    var q = $('#mp-loc').value.trim();
+    if (!q) { mpStatus('Enter a location first.'); return Promise.resolve(); }
+    mpStatus('Searching\u2026');
+    return geocode(q).then(function (g) {
+      if (g) return mpPin(g.lat, g.lon, false).then(function () { mpStatus('Found \u2014 click elsewhere on the map to adjust the pin.'); });
+      mpStatus('No match found \u2014 click the map to drop a pin manually.');
+    });
+  }
+  function afterPicker() {
+    MP = { map: null, marker: null };
+    var start = function () {
+      var el = $('#mp-map'); if (!el || !window.L) { mpStatus('Map library failed to load \u2014 check your internet connection.'); return; }
+      var la = parseFloat($('#mp-lat').value), ln = parseFloat($('#mp-lng').value), has = isFinite(la) && isFinite(ln);
+      var map = L.map(el).setView(has ? [la, ln] : [53.6, -8.3], has ? 13 : 7);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+      if (has) MP.marker = L.marker([la, ln]).addTo(map);
+      map.on('click', function (e) { mpPin(e.latlng.lat, e.latlng.lng, true); });
+      MP.map = map; setTimeout(function () { map.invalidateSize(); }, 80);
+      if (!has && $('#mp-loc').value.trim()) mpSearch();
+    };
+    if (window.L) return start();
+    if (!document.getElementById('leaflet-css')) { var l = document.createElement('link'); l.id = 'leaflet-css'; l.rel = 'stylesheet'; l.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css'; document.head.appendChild(l); }
+    var sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js'; sc.onload = start; sc.onerror = start; document.head.appendChild(sc);
+  }
+
   /* ---------- admin ---------- */
   function pageAdmin() {
     if (!S.viewer.admin) return '<div class="page-title"><h2>Admin</h2></div>' + locked('This page is for administrators.');
@@ -685,20 +754,10 @@
       var pid = +b.dataset.id, p = S.by.get(pid);
       var m = modal('<h3>Suggest a correction</h3><div class="sub">' + esc(nm(p)) + '</div><form data-form="suggest" data-id="' + pid + '"><div class="field"><label for="sg-text">What should change?</label><textarea id="sg-text" name="text" maxlength="1000" required placeholder="For example: born 14 March 1891, not 1892. Source: parish register.">' + (b.dataset.ctx ? esc(b.dataset.ctx) + ': ' : '') + '</textarea></div><div class="status-line err" id="sg-msg" role="alert"></div><div class="modal-actions"><button class="btn small ghost" data-act="close" type="button">Cancel</button><button class="btn small" type="submit">Send</button></div></form>');
     }
-    else if (act === 'ev-edit') {
-      var pe = S.by.get(+b.dataset.id), ty = b.dataset.type;
-      var cur = { birth: [pe.bplace, pe.born], death: [pe.dplace, pe.died], burial: [pe.burial, ''] }[ty];
-      modal('<h3>Edit ' + ty + '</h3><div class="sub">' + esc(dn(pe)) + '</div><form data-form="event" data-id="' + pe.id + '" data-type="' + ty + '"><div class="field"><label for="ev-place">Place</label><input id="ev-place" name="place" maxlength="120" value="' + esc(cur[0] || '') + '" placeholder="e.g. Clonruff, Ballymoe, Co. Galway"></div>' +
-        (ty === 'burial' ? '' : '<div class="field"><label for="ev-date">Date</label><input id="ev-date" name="date" maxlength="60" value="' + esc(cur[1] || '') + '" placeholder="e.g. 19 Aug 1882 or c.1890"></div>') +
-        '<p class="vt-sub">The place shows on a map on the person page. Leave both blank to clear this event.</p><div class="status-line err" id="ev-msg" role="alert"></div><div class="modal-actions"><button class="btn small ghost" data-act="close" type="button">Cancel</button><button class="btn small" type="submit">Save</button></div></form>');
-    }
-    else if (act === 'marr-edit' || act === 'marr-add') {
-      var mp = S.by.get(+b.dataset.id), msp = b.dataset.sp ? +b.dataset.sp : null;
-      var mc = (mp.marr || []).filter(function (x) { return x.sp === msp; })[0] || {};
-      var mopts = '<option value="">Choose a spouse\u2026</option>' + S.doc.people.filter(function (x) { return x.id !== mp.id; }).sort(function (x, y) { return dn(x).localeCompare(dn(y)); }).map(function (x) { return '<option value="' + x.id + '"' + (x.id === msp ? ' selected' : '') + '>' + esc(dn(x)) + ' (' + x.id + ')</option>'; }).join('');
-      modal('<h3>' + (msp ? 'Edit marriage' : 'Add marriage') + '</h3><div class="sub">' + esc(dn(mp)) + '</div><form data-form="marriage" data-id="' + mp.id + '"><div class="field"><label for="mg-sp">Spouse</label><select id="mg-sp" name="sp"' + (msp ? ' disabled' : '') + '>' + mopts + '</select></div>' +
-        '<div class="field"><label for="mg-place">Place</label><input id="mg-place" name="place" maxlength="120" value="' + esc(mc.place || '') + '"></div><div class="field"><label for="mg-date">Date</label><input id="mg-date" name="date" maxlength="60" value="' + esc(mc.date || '') + '"></div>' +
-        '<div class="field"><label for="mg-wit">Witnesses</label><input id="mg-wit" name="wit" maxlength="200" value="' + esc(mc.wit || '') + '"></div><div class="status-line err" id="mg-msg" role="alert"></div><div class="modal-actions"><button class="btn small ghost" data-act="close" type="button">Cancel</button><button class="btn small" type="submit">Save</button></div></form>');
+    else if (act === 'mp-search') mpSearch();
+    else if (act === 'marr-del') {
+      if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Confirm delete'; return; }
+      api('admin/person/' + b.dataset.id + '/marriage', { method: 'POST', body: { sp: +b.dataset.sp, remove: true } }).then(function () { return refresh(false); }).then(function () { go('/person/' + b.dataset.id); }).catch(function (er) { setMsg('ep-msg', er.message, true); });
     }
     else if (act === 'doc-add') {
       var dk = BUCKETS.filter(function (x) { return x[0] === b.dataset.kind; })[0];
@@ -751,10 +810,10 @@
       api('password', { method: 'POST', body: { current: v('current'), next: v('next') } }).then(function () { f.reset(); setMsg('pw-msg', 'Password changed.'); done(); }).catch(function (er) { setMsg('pw-msg', er.message, true); done(); });
     } else if (kind === 'suggest') {
       api('suggest', { method: 'POST', body: { personId: +f.dataset.id, text: v('text') } }).then(function () { closeModal(); }).catch(function (er) { setMsg('sg-msg', er.message, true); done(); });
-    } else if (kind === 'event') {
-      api('admin/person/' + f.dataset.id + '/event', { method: 'POST', body: { type: f.dataset.type, place: v('place'), date: v('date') } }).then(function () { closeModal(); return refresh(); }).catch(function (er) { setMsg('ev-msg', er.message, true); done(); });
-    } else if (kind === 'marriage') {
-      api('admin/person/' + f.dataset.id + '/marriage', { method: 'POST', body: { sp: +v('sp'), place: v('place'), date: v('date'), wit: v('wit') } }).then(function () { closeModal(); return refresh(); }).catch(function (er) { setMsg('mg-msg', er.message, true); done(); });
+    } else if (kind === 'evpage') {
+      api('admin/person/' + f.dataset.id + '/event', { method: 'POST', body: { type: f.dataset.type, place: v('location'), date: v('date'), lat: v('lat'), lng: v('lng') } }).then(function () { return refresh(false); }).then(function () { go('/person/' + f.dataset.id); }).catch(function (er) { setMsg('ep-msg', er.message, true); done(); });
+    } else if (kind === 'marrpage') {
+      api('admin/person/' + f.dataset.id + '/marriage', { method: 'POST', body: { sp: +v('sp'), place: v('location'), date: v('date'), wit: v('wit'), lat: v('lat'), lng: v('lng') } }).then(function () { return refresh(false); }).then(function () { go('/person/' + f.dataset.id); }).catch(function (er) { setMsg('ep-msg', er.message, true); done(); });
     } else if (kind === 'child') {
       var fa = f.dataset.role === 'fa' ? f.dataset.id : v('other'), mo = f.dataset.role === 'mo' ? f.dataset.id : v('other');
       api('admin/person', { method: 'POST', body: { first: v('first'), sur: v('sur'), born: v('born'), fa: fa, mo: mo } }).then(function () { closeModal(); return refresh(); }).catch(function (er) { setMsg('ch-msg', er.message, true); done(); });

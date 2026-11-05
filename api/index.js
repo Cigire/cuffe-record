@@ -208,18 +208,20 @@ async function handle(req, res) {
       return send(res, 200, { ok: true });
     }
 
+    const coord = (v, lim) => { const n = parseFloat(v); return Number.isFinite(n) && Math.abs(n) <= lim ? Math.round(n * 1e6) / 1e6 : null; };
     if (b === 'person' && c && d === 'event' && method === 'POST') {
       const id = Number(c), type = body.type;
       if (!['birth', 'death', 'burial'].includes(type)) fail(400, 'Unknown event.');
       const date = str(body.date, 60), place = str(body.place, 120);
+      const lat = coord(body.lat, 90), lng = coord(body.lng, 180);
       await people.load();
       const result = await store.update('people.json', people.seedCopy, (doc) => {
         const t = doc.people.find((p) => p.id === id);
         if (!t) return { error: 'No such person.' };
-        const set = (k, v) => { if (v) t[k] = v; else delete t[k]; };
-        if (type === 'birth') { set('born', date); set('bplace', place); }
-        else if (type === 'death') { set('died', date); set('dplace', place); }
-        else set('burial', place);
+        const set = (k, v) => { if (v != null && v !== '') t[k] = v; else delete t[k]; };
+        const keys = { birth: ['born', 'bplace', 'blat', 'blng'], death: ['died', 'dplace', 'dlat', 'dlng'], burial: ['kdate', 'burial', 'klat', 'klng'] }[type];
+        set(keys[0], date); set(keys[1], place);
+        if (lat != null && lng != null) { set(keys[2], lat); set(keys[3], lng); } else { set(keys[2], null); set(keys[3], null); }
         t.mod = new Date().toISOString().slice(0, 10); doc.edited = true;
         return { id };
       });
@@ -228,12 +230,14 @@ async function handle(req, res) {
     }
     if (b === 'person' && c && d === 'marriage' && method === 'POST') {
       const id = Number(c), sp = Number(body.sp);
+      const lat = coord(body.lat, 90), lng = coord(body.lng, 180);
       await people.load();
       const result = await store.update('people.json', people.seedCopy, (doc) => {
         const t = doc.people.find((p) => p.id === id), o = doc.people.find((p) => p.id === sp);
         if (!t) return { error: 'No such person.' };
         if (!o || o.id === t.id) return { error: 'Choose a spouse.' };
-        people.setMarriageTo(doc, t, o, str(body.date, 60), str(body.place, 120), str(body.wit, 200));
+        if (body.remove) people.removeMarriage(doc, t, o);
+        else people.setMarriageTo(doc, t, o, str(body.date, 60), str(body.place, 120), str(body.wit, 200), lat, lng);
         t.mod = o.mod = new Date().toISOString().slice(0, 10); doc.edited = true;
         return { id };
       });
@@ -260,6 +264,7 @@ async function handle(req, res) {
         if (id) {
           target = doc.people.find((p) => p.id === id);
           if (!target) return { error: 'No such person.' };
+          [['bplace', 'blat', 'blng'], ['dplace', 'dlat', 'dlng'], ['burial', 'klat', 'klng']].forEach((k) => { if ((target[k[0]] || '') !== clean[k[0]]) { delete target[k[1]]; delete target[k[2]]; } });
           Object.assign(target, clean);
           ['fa', 'mo'].forEach((k) => { const n = one(body[k], id); if (n) target[k] = n; else delete target[k]; });
         } else {
