@@ -43,7 +43,7 @@ async function handle(req, res) {
   }
 
   const user = await currentUser(req);
-  const [a, b, c] = parts;
+  const [a, b, c, d] = parts;
 
   // ---- session ----
   if (a === 'me' && method === 'GET') {
@@ -208,7 +208,40 @@ async function handle(req, res) {
       return send(res, 200, { ok: true });
     }
 
-    if (b === 'person' && method === 'POST') {
+    if (b === 'person' && c && d === 'event' && method === 'POST') {
+      const id = Number(c), type = body.type;
+      if (!['birth', 'death', 'burial'].includes(type)) fail(400, 'Unknown event.');
+      const date = str(body.date, 60), place = str(body.place, 120);
+      await people.load();
+      const result = await store.update('people.json', people.seedCopy, (doc) => {
+        const t = doc.people.find((p) => p.id === id);
+        if (!t) return { error: 'No such person.' };
+        const set = (k, v) => { if (v) t[k] = v; else delete t[k]; };
+        if (type === 'birth') { set('born', date); set('bplace', place); }
+        else if (type === 'death') { set('died', date); set('dplace', place); }
+        else set('burial', place);
+        t.mod = new Date().toISOString().slice(0, 10); doc.edited = true;
+        return { id };
+      });
+      if (result.error) fail(404, result.error);
+      return send(res, 200, result);
+    }
+    if (b === 'person' && c && d === 'marriage' && method === 'POST') {
+      const id = Number(c), sp = Number(body.sp);
+      await people.load();
+      const result = await store.update('people.json', people.seedCopy, (doc) => {
+        const t = doc.people.find((p) => p.id === id), o = doc.people.find((p) => p.id === sp);
+        if (!t) return { error: 'No such person.' };
+        if (!o || o.id === t.id) return { error: 'Choose a spouse.' };
+        people.setMarriageTo(doc, t, o, str(body.date, 60), str(body.place, 120), str(body.wit, 200));
+        t.mod = o.mod = new Date().toISOString().slice(0, 10); doc.edited = true;
+        return { id };
+      });
+      if (result.error) fail(400, result.error);
+      return send(res, 200, result);
+    }
+
+    if (b === 'person' && !d && method === 'POST') {
       // create (no id) or edit (id) a person
       const id = c ? Number(c) : null;
       const clean = {
@@ -239,7 +272,7 @@ async function handle(req, res) {
           sp.forEach((s) => { const o = doc.people.find((p) => p.id === s); if (o && !(o.sp || []).includes(target.id) && (o.sp || []).length < 2) (o.sp = o.sp || []).push(target.id); });
         }
         Object.keys(clean).forEach((k) => { if (clean[k] === '' || clean[k] === false || (k === 'privacy' && clean[k] === 'auto')) delete target[k]; });
-        people.setMarriage(doc, target, mdate, mplace);
+        if (body.mdate !== undefined || body.mplace !== undefined) people.setMarriage(doc, target, mdate, mplace);
         target.mod = today;
         doc.edited = true;
         return { id: target.id };

@@ -411,12 +411,18 @@
     var none = '<div class="vt-detail"><span class="vt-empty">Not recorded yet</span></div>';
     var nDocs = docs(id);
     var unk = function (t, w) { return t ? esc(t) : '<span class="vt-empty">' + w + '</span>'; };
-    var ev = function (place, date) {
-      if (!place && !date) return none;
-      return '<div class="vt-event"><div class="vt-detail"><span>' + unk(place, 'Location unknown') + ' · ' + unk(date, 'date unknown') + '</span></div>' + (place ? mapBox(place) : '') + '</div>';
+    var admin = S.viewer.admin, member = S.viewer.approved && !admin;
+    var evBtn = function (type, label, has) {
+      if (admin) return '<button class="btn ghost small" data-act="ev-edit" data-id="' + id + '" data-type="' + type + '" type="button">' + (has ? 'Edit' : '+ Add') + '</button>';
+      if (member) return '<button class="btn ghost small" data-act="suggest" data-id="' + id + '" data-ctx="' + label + '" type="button">' + (has ? 'Suggest edit' : '+ Add') + '</button>';
+      return '';
+    };
+    var ev = function (place, date, type, label) {
+      if (!place && !date) return '<div class="vt-detail"><span class="vt-empty">Not recorded yet</span>' + evBtn(type, label, false) + '</div>';
+      return '<div class="vt-event"><div class="vt-detail"><span>' + unk(place, 'Location unknown') + ' \u00b7 ' + unk(date, 'date unknown') + '</span>' + evBtn(type, label, true) + '</div>' + (place ? mapBox(place) : '') + '</div>';
     };
     var vit = row('Name', esc(dn(p))) + row('Father', parentCell(p.fa)) + row('Mother', parentCell(p.mo)) +
-      row('Birth', ev(p.bplace, p.born)) + row('Death', ev(p.dplace, p.died)) + row('Burial', p.burial ? ev(p.burial, '') : none);
+      row('Birth', ev(p.bplace, p.born, 'birth', 'Birth')) + row('Death', ev(p.dplace, p.died, 'death', 'Death')) + row('Burial', ev(p.burial, '', 'burial', 'Burial'));
     if (p.place) vit += row('Lived at', '<div class="vt-event"><div class="vt-detail"><span>' + esc(p.place) + '</span></div>' + mapBox(p.place) + '</div>');
     vit += row('Documents', nDocs + ' on file' + (S.arch.locked ? ' (' + (S.viewer.user ? 'available once an admin approves your account' : 'sign in as an approved member to view') + ')' : ''));
     if (S.viewer.approved) {
@@ -433,12 +439,13 @@
       marrHtml = '<table class="vitals-table"><tbody>' + ms.map(function (m, i) {
         var sp = m.sp ? S.by.get(m.sp) : null;
         var who = sp ? '<a href="/person/' + sp.id + '">' + esc(dn(sp)) + '</a>' : '<span class="vt-empty">Not recorded yet</span>';
-        var ks = sp ? kids.filter(function (c) { return (c.fa === id ? c.mo : c.fa) === sp.id; }) : [];
-        return '<tr><th>' + (ORD[i] || (i + 1) + 'th') + ' marriage</th><td><div class="vt-detail"><span>' + who + ((m.date || m.place) ? ' · ' + unk(m.place, 'location unknown') + ' · ' + unk(m.date, 'date unknown') : '') + '</span></div>' +
+        return '<tr><th>' + (ORD[i] || (i + 1) + 'th') + ' marriage</th><td><div class="vt-detail"><span>' + who + ((m.date || m.place) ? ' \u00b7 ' + unk(m.place, 'location unknown') + ' \u00b7 ' + unk(m.date, 'date unknown') : '') + '</span>' +
+          (admin ? '<button class="btn ghost small" data-act="marr-edit" data-id="' + id + '" data-sp="' + (m.sp || '') + '" type="button">Edit</button>' : member ? '<button class="btn ghost small" data-act="suggest" data-id="' + id + '" data-ctx="Marriage" type="button">Suggest edit</button>' : '') + '</div>' +
           (m.wit && S.viewer.approved ? '<div class="vt-sub">Witnesses: ' + esc(m.wit) + '</div>' : '') + (m.place ? mapBox(m.place) : '') +
-          (ks.length ? '<ul class="doc-list" style="margin-top:8px">' + ks.map(function (c) { return '<li><a class="name" href="/person/' + c.id + '">' + esc(dn(c)) + '</a> <span class="ftype">' + esc(yearsLabel(c)) + '</span></li>'; }).join('') + '</ul>' : '') + '</td></tr>';
+          '</td></tr>';
       }).join('') + '</tbody></table>';
     } else marrHtml = '<p class="empty-note" style="padding:6px 0">No marriages recorded yet.</p>';
+    marrHtml += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">' + (admin ? '<button class="btn ghost small" data-act="marr-add" data-id="' + id + '" type="button">+ Add marriage</button>' : member ? '<button class="btn ghost small" data-act="suggest" data-id="' + id + '" data-ctx="Marriage" type="button">+ Add marriage</button>' : '') + '</div>';
     var docHtml;
     if (S.arch.locked) docHtml = '<div class="locked-block"><span class="lock-icon" aria-hidden="true">\u{1F512}</span><div style="font-family:var(--display);font-size:19px">' + nDocs + ' document' + (nDocs === 1 ? '' : 's') + ' on file for ' + esc(dn(p)) + '</div><p>Newspaper clippings, photos and research notes are visible to approved members.</p><a href="/membership" class="btn">Request access</a></div>';
     else {
@@ -447,7 +454,7 @@
         var its = mine.filter(function (i) { return i.kind === b[0]; });
         return '<div class="doc-section"><h4>' + b[1] + ' <span style="opacity:.55">(' + its.length + ')</span></h4>' + (its.length ? '<ul class="doc-list">' + its.map(function (i) {
           return '<li><a class="doclink" href="/api/file/' + i.id + '" target="_blank" rel="noopener"><span class="fname">\u{1F4C4} ' + esc(i.title) + '</span></a><span class="ftype">view scan</span></li>';
-        }).join('') + '</ul>' : '<p class="empty-note" style="padding:8px 0">None catalogued yet.</p>') + '</div>';
+        }).join('') + '</ul>' : '<p class="empty-note" style="padding:8px 0">None catalogued yet.</p>') + (admin ? '<button class="btn ghost small" data-act="doc-add" data-id="' + id + '" data-kind="' + b[0] + '" type="button" style="margin-top:4px">+ Add to ' + b[1].replace(' (Scanned)', '') + '</button>' : '') + '</div>';
       }).join('');
     }
     var actions = '';
@@ -460,7 +467,8 @@
       '<div class="doc-section"><h4>Vital records</h4><table class="vitals-table"><tbody>' + vit + '</tbody></table></div>' +
       '<div class="doc-section"><h4>Marriages' + (ms.length ? ' <span style="opacity:.55">(' + ms.length + ')</span>' : '') + '</h4>' + marrHtml + '</div>' +
       docHtml +
-      '<div class="doc-section"><h4>Children' + (kids.length ? ' <span style="opacity:.55">(' + kids.length + ')</span>' : '') + '</h4>' + (kids.length ? table(kids) : '<p class="empty-note" style="padding:6px 0">No children linked yet.</p>') + '</div>' +
+      '<div class="doc-section"><h4>Children' + (kids.length ? ' <span style="opacity:.55">(' + kids.length + ')</span>' : '') + '</h4>' + (kids.length ? table(kids) : '<p class="empty-note" style="padding:6px 0">No children linked yet.</p>') +
+      (admin ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn ghost small" data-act="child-add" data-id="' + id + '" data-role="fa" type="button">+ Add child (as father)</button><button class="btn ghost small" data-act="child-add" data-id="' + id + '" data-role="mo" type="button">+ Add child (as mother)</button></div>' : '') + '</div>' +
       (sibs.length ? '<details class="branch-box"><summary>Brothers and sisters <span class="cnt">' + sibs.length + '</span></summary>' + table(sibs) + '</details>' : '');
   }
 
@@ -675,7 +683,36 @@
     else if (act === 'close') closeModal();
     else if (act === 'suggest') {
       var pid = +b.dataset.id, p = S.by.get(pid);
-      var m = modal('<h3>Suggest a correction</h3><div class="sub">' + esc(nm(p)) + '</div><form data-form="suggest" data-id="' + pid + '"><div class="field"><label for="sg-text">What should change?</label><textarea id="sg-text" name="text" maxlength="1000" required placeholder="For example: born 14 March 1891, not 1892. Source: parish register."></textarea></div><div class="status-line err" id="sg-msg" role="alert"></div><div class="modal-actions"><button class="btn small ghost" data-act="close" type="button">Cancel</button><button class="btn small" type="submit">Send</button></div></form>');
+      var m = modal('<h3>Suggest a correction</h3><div class="sub">' + esc(nm(p)) + '</div><form data-form="suggest" data-id="' + pid + '"><div class="field"><label for="sg-text">What should change?</label><textarea id="sg-text" name="text" maxlength="1000" required placeholder="For example: born 14 March 1891, not 1892. Source: parish register.">' + (b.dataset.ctx ? esc(b.dataset.ctx) + ': ' : '') + '</textarea></div><div class="status-line err" id="sg-msg" role="alert"></div><div class="modal-actions"><button class="btn small ghost" data-act="close" type="button">Cancel</button><button class="btn small" type="submit">Send</button></div></form>');
+    }
+    else if (act === 'ev-edit') {
+      var pe = S.by.get(+b.dataset.id), ty = b.dataset.type;
+      var cur = { birth: [pe.bplace, pe.born], death: [pe.dplace, pe.died], burial: [pe.burial, ''] }[ty];
+      modal('<h3>Edit ' + ty + '</h3><div class="sub">' + esc(dn(pe)) + '</div><form data-form="event" data-id="' + pe.id + '" data-type="' + ty + '"><div class="field"><label for="ev-place">Place</label><input id="ev-place" name="place" maxlength="120" value="' + esc(cur[0] || '') + '" placeholder="e.g. Clonruff, Ballymoe, Co. Galway"></div>' +
+        (ty === 'burial' ? '' : '<div class="field"><label for="ev-date">Date</label><input id="ev-date" name="date" maxlength="60" value="' + esc(cur[1] || '') + '" placeholder="e.g. 19 Aug 1882 or c.1890"></div>') +
+        '<p class="vt-sub">The place shows on a map on the person page. Leave both blank to clear this event.</p><div class="status-line err" id="ev-msg" role="alert"></div><div class="modal-actions"><button class="btn small ghost" data-act="close" type="button">Cancel</button><button class="btn small" type="submit">Save</button></div></form>');
+    }
+    else if (act === 'marr-edit' || act === 'marr-add') {
+      var mp = S.by.get(+b.dataset.id), msp = b.dataset.sp ? +b.dataset.sp : null;
+      var mc = (mp.marr || []).filter(function (x) { return x.sp === msp; })[0] || {};
+      var mopts = '<option value="">Choose a spouse\u2026</option>' + S.doc.people.filter(function (x) { return x.id !== mp.id; }).sort(function (x, y) { return dn(x).localeCompare(dn(y)); }).map(function (x) { return '<option value="' + x.id + '"' + (x.id === msp ? ' selected' : '') + '>' + esc(dn(x)) + ' (' + x.id + ')</option>'; }).join('');
+      modal('<h3>' + (msp ? 'Edit marriage' : 'Add marriage') + '</h3><div class="sub">' + esc(dn(mp)) + '</div><form data-form="marriage" data-id="' + mp.id + '"><div class="field"><label for="mg-sp">Spouse</label><select id="mg-sp" name="sp"' + (msp ? ' disabled' : '') + '>' + mopts + '</select></div>' +
+        '<div class="field"><label for="mg-place">Place</label><input id="mg-place" name="place" maxlength="120" value="' + esc(mc.place || '') + '"></div><div class="field"><label for="mg-date">Date</label><input id="mg-date" name="date" maxlength="60" value="' + esc(mc.date || '') + '"></div>' +
+        '<div class="field"><label for="mg-wit">Witnesses</label><input id="mg-wit" name="wit" maxlength="200" value="' + esc(mc.wit || '') + '"></div><div class="status-line err" id="mg-msg" role="alert"></div><div class="modal-actions"><button class="btn small ghost" data-act="close" type="button">Cancel</button><button class="btn small" type="submit">Save</button></div></form>');
+    }
+    else if (act === 'doc-add') {
+      var dk = BUCKETS.filter(function (x) { return x[0] === b.dataset.kind; })[0];
+      modal('<h3>Add to ' + dk[1].replace(' (Scanned)', '') + '</h3><div class="sub">' + esc(dn(S.by.get(+b.dataset.id))) + '</div><form data-form="upload"><input type="hidden" name="kind" value="' + dk[0] + '"><input type="hidden" name="personId" value="' + b.dataset.id + '">' +
+        '<div class="field"><label for="up-file">File (JPG, PNG, WebP, GIF, PDF or text, up to 3 MB)</label><input id="up-file" name="file" type="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,text/plain" required></div><div class="field"><label for="up-title">Title</label><input id="up-title" name="title" maxlength="120"></div>' +
+        '<div class="status-line err" id="up-msg" role="alert"></div><div class="modal-actions"><button class="btn small ghost" data-act="close" type="button">Cancel</button><button class="btn small" type="submit">Upload</button></div></form>');
+    }
+    else if (act === 'child-add') {
+      var cp = S.by.get(+b.dataset.id), role = b.dataset.role;
+      var cs = cp.sp.map(function (i) { return S.by.get(i); }).filter(Boolean);
+      var copts = '<option value="">Not recorded</option>' + cs.map(function (x) { return '<option value="' + x.id + '"' + (cs.length === 1 ? ' selected' : '') + '>' + esc(dn(x)) + '</option>'; }).join('');
+      modal('<h3>Add child (as ' + (role === 'fa' ? 'father' : 'mother') + ')</h3><div class="sub">' + esc(dn(cp)) + '</div><form data-form="child" data-id="' + cp.id + '" data-role="' + role + '"><div class="field-row"><div class="field"><label for="ch-first">First name</label><input id="ch-first" name="first" maxlength="80" required></div><div class="field"><label for="ch-sur">Surname</label><input id="ch-sur" name="sur" maxlength="80" value="' + esc(cp.sur || '') + '"></div></div>' +
+        '<div class="field"><label for="ch-born">Born</label><input id="ch-born" name="born" maxlength="60"></div><div class="field"><label for="ch-other">' + (role === 'fa' ? 'Mother' : 'Father') + '</label><select id="ch-other" name="other">' + copts + '</select></div>' +
+        '<div class="status-line err" id="ch-msg" role="alert"></div><div class="modal-actions"><button class="btn small ghost" data-act="close" type="button">Cancel</button><button class="btn small" type="submit">Add child</button></div></form>');
     }
     else if (act === 'user') {
       api('admin/users/' + b.dataset.id, { method: 'POST', body: { action: b.dataset.do } }).then(function () { adminMsg('Saved.'); loadAdmin(); return refresh(false); }).catch(function (er) { adminMsg(er.message, true); });
@@ -714,6 +751,13 @@
       api('password', { method: 'POST', body: { current: v('current'), next: v('next') } }).then(function () { f.reset(); setMsg('pw-msg', 'Password changed.'); done(); }).catch(function (er) { setMsg('pw-msg', er.message, true); done(); });
     } else if (kind === 'suggest') {
       api('suggest', { method: 'POST', body: { personId: +f.dataset.id, text: v('text') } }).then(function () { closeModal(); }).catch(function (er) { setMsg('sg-msg', er.message, true); done(); });
+    } else if (kind === 'event') {
+      api('admin/person/' + f.dataset.id + '/event', { method: 'POST', body: { type: f.dataset.type, place: v('place'), date: v('date') } }).then(function () { closeModal(); return refresh(); }).catch(function (er) { setMsg('ev-msg', er.message, true); done(); });
+    } else if (kind === 'marriage') {
+      api('admin/person/' + f.dataset.id + '/marriage', { method: 'POST', body: { sp: +v('sp'), place: v('place'), date: v('date'), wit: v('wit') } }).then(function () { closeModal(); return refresh(); }).catch(function (er) { setMsg('mg-msg', er.message, true); done(); });
+    } else if (kind === 'child') {
+      var fa = f.dataset.role === 'fa' ? f.dataset.id : v('other'), mo = f.dataset.role === 'mo' ? f.dataset.id : v('other');
+      api('admin/person', { method: 'POST', body: { first: v('first'), sur: v('sur'), born: v('born'), fa: fa, mo: mo } }).then(function () { closeModal(); return refresh(); }).catch(function (er) { setMsg('ch-msg', er.message, true); done(); });
     } else if (kind === 'person') {
       var id = $('#ap-pick').value;
       var body = { first: v('first'), sur: v('sur'), born: v('born'), died: v('died'), bplace: v('bplace'), dplace: v('dplace'), place: v('place'), burial: v('burial'), mdate: v('mdate'), mplace: v('mplace'), fa: v('fa'), mo: v('mo'), notes: v('notes'), dna: f.elements.dna.checked, usa: f.elements.usa.checked, privacy: v('privacy'), sp: v('sp') };
@@ -726,7 +770,7 @@
       rd.onload = function () {
         var data = String(rd.result).split(',')[1] || '';
         api('archive', { method: 'POST', body: { title: v('title'), kind: v('kind'), personId: v('personId'), caption: v('caption'), filename: file.name, contentType: file.type, data: data } })
-          .then(function () { return refresh(false); }).then(function () { f.reset(); setMsg('up-msg', 'Filed.'); drawAdmin(); done(); })
+          .then(function () { return refresh(false); }).then(function () { if ($('.modal-backdrop')) { closeModal(); render(); return; } f.reset(); setMsg('up-msg', 'Filed.'); drawAdmin(); done(); })
           .catch(function (er) { setMsg('up-msg', er.message, true); done(); });
       };
       rd.onerror = function () { setMsg('up-msg', 'Could not read that file.', true); done(); };
